@@ -1,0 +1,58 @@
+{
+  "general": {
+    "title": "Support",
+    "defaultOpen": true,
+    "welcomeMessage": "Hi! How can I help?",
+    "launcherPosition": "bottom-right"
+  },
+  "branding": {
+    "primaryColor": "#2563eb",
+    "customCss": ""
+  },
+  "behavior": {
+    "replyDelayMs": 0,
+    "maxHistory": 200
+  },
+  "integrations": {
+    "apiUrl": "/api/chat",
+    "apiAuthHeader": "",
+    "webhookUrl": ""
+  },
+  "security": {
+    "dataRetentionDays": 30,
+    "allowedOrigins": []
+  },
+  "ai": {
+    "provider": "echo",
+    "systemPrompt": "You are a helpful customer support assistant.",
+    "temperature": 0.2,
+    "maxTokens": 256,
+    "topP": 1,
+    "openai": {
+      "apiKey": "",
+      "baseUrl": "https://api.openai.com/v1",
+      "chatModel": "gpt-4o-mini",
+      "embeddingModel": "text-embedding-3-small"
+    },
+    "ollama": {
+      "host": "http://localhost:11434",
+      "chatModel": "llama3",
+      "embeddingModel": "nomic-embed-text"
+    },
+    "rag": {
+      "enabled": false,
+      "topK": 5,
+      "namespace": "default",
+      "useInChat": false,
+      "filterBySession": false
+    }
+  },
+  "vector": {
+    "pinecone": {
+      "apiKey": "",
+      "indexHost": "",
+      "namespace": "default",
+      "topK": 5
+    }
+  }
+}

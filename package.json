@@ -1,0 +1,42 @@
+{
+  "name": "customer-support-chat-widget",
+  "version": "0.1.0",
+  "description": "Simple customer service chat widget with session persistence for React + TypeScript",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src --ext .ts,.tsx || echo \"lint skipped\"",
+    "start": "npm run build && npm --prefix example run dev -- --port 5173 --strictPort",
+    "start:preview": "npm run build && npm --prefix example run build && npm --prefix example run preview -- --port 4173 --strictPort",
+    "db:up": "docker inspect chatbot1-pg >NUL 2>&1 && docker start chatbot1-pg || docker run -d --name chatbot1-pg -e POSTGRES_PASSWORD=chatpass -e POSTGRES_DB=chatbot1 -p 5432:5432 postgres:16-alpine",
+    "db:start": "docker start chatbot1-pg",
+    "db:stop": "docker stop chatbot1-pg",
+    "db:rm": "docker rm -f chatbot1-pg",
+    "db:logs": "docker logs -f chatbot1-pg",
+    "start:db": "npm run db:up && npm start",
+    "dev:all": "npm run build && concurrently -n db,web -c cyan,green \"docker compose up\" \"npm --prefix example run dev -- --port 5173 --strictPort\""
+  },
+  "keywords": [
+    "chatbot",
+    "customer-support",
+    "react",
+    "typescript",
+    "widget"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "tsup": "^8.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "concurrently": "^9.0.0"
+  }
+}

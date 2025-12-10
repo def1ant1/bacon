@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Backend WebUI · Chatbot1</title>
+    <style>
+      :root { --fg:#111; --muted:#666; --accent:#2563eb; --bg:#fafafa; --card:#fff; --border:#e5e7eb; }
+      body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:var(--fg); background:var(--bg); }
+      header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--card); position:sticky; top:0; }
+      header h1 { font-size:16px; margin:0; }
+      header a { color:var(--accent); text-decoration:none; }
+      .wrap { display:grid; grid-template-columns:280px 1fr; height:calc(100vh - 50px); }
+      .sidebar { border-right:1px solid var(--border); background:var(--card); overflow:auto; }
+      .content { overflow:auto; }
+      .section { padding:12px 16px; }
+      .session { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
+      .session:hover { background:#f3f4f6; }
+      .session .meta { color:var(--muted); font-size:12px; }
+      .msgs { padding:16px; }
+      .files { padding:12px 16px; border-top:1px solid var(--border); background:#fafafa; }
+      .files h3 { margin:8px 0; font-size:13px; color:#111; }
+      .files .file { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px dashed #e5e7eb; }
+      .files .file:last-child { border-bottom: none; }
+      .files .meta { color:var(--muted); font-size:12px; }
+      .msg { margin:8px 0; display:flex; }
+      .bubble { max-width:70%; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:#fff; }
+      .msg.user { justify-content:flex-end; }
+      .msg.user .bubble { background:#e8f0ff; border-color:#d0dbff; }
+      .msg .time { color:var(--muted); font-size:11px; margin:2px 4px; }
+      .toolbar { display:flex; gap:8px; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--card); align-items:center; }
+      button { padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+      button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+      input[type="text"] { padding:6px 8px; border-radius:6px; border:1px solid var(--border); width:100%; }
+      .empty { color:var(--muted); padding:16px; }
+      /* Modal viewer */
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 50; }
+      .modal.show { display: flex; }
+      .modal-dialog { width: min(90vw, 900px); height: min(85vh, 760px); background:#fff; border-radius:10px; box-shadow: 0 20px 50px rgba(0,0,0,0.35); display:flex; flex-direction:column; overflow:hidden; }
+      .modal-head { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border); background:#f8fafc; }
+      .modal-title { font-weight:600; font-size:14px; }
+      .modal-body { flex:1; overflow:auto; background:#111; display:flex; align-items:center; justify-content:center; }
+      .modal-body iframe, .modal-body img, .modal-body object { width:100%; height:100%; border:0; background:#fff; }
+      .close { border:none; background:#e5e7eb; padding:6px 10px; border-radius:6px; cursor:pointer; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Backend WebUI</h1>
+      <nav>
+        <a href="/" title="Open app">Open App</a>
+        ·
+        <a href="/admin.html" title="Open admin">Admin</a>
+      </nav>
+    </header>
+    <div class="wrap">
+      <aside class="sidebar">
+        <div class="toolbar">
+          <button id="refresh" class="primary">Refresh</button>
+        </div>
+        <div id="sessions"></div>
+      </aside>
+      <main class="content">
+        <div class="toolbar">
+          <div style="flex:1; display:flex; gap:8px; align-items:center;">
+            <strong id="currentSession">No session selected</strong>
+          </div>
+          <button id="clearSession">Clear Session</button>
+        </div>
+        <div id="messages" class="msgs"></div>
+        <div class="toolbar">
+          <input type="text" id="adminText" placeholder="Type a message to send to the user..." style="flex:1;" />
+          <button id="adminSend" class="primary">Send</button>
+        </div>
+        <div id="files" class="files">
+          <h3>Files</h3>
+          <div id="filesList" class="list"></div>
+        </div>
+      </main>
+      <!-- File viewer modal -->
+      <div id="viewerModal" class="modal" role="dialog" aria-modal="true" aria-label="File viewer">
+        <div class="modal-dialog">
+          <div class="modal-head">
+            <div class="modal-title" id="viewerTitle">File</div>
+            <button id="viewerClose" class="close">Close</button>
+          </div>
+          <div class="modal-body" id="viewerBody"></div>
+        </div>
+      </div>
+      </div>
+    <script>
+      const $ = (sel) => document.querySelector(sel);
+      const sessionsEl = $('#sessions');
+      const messagesEl = $('#messages');
+      const currentSessionEl = $('#currentSession');
+      const filesListEl = document.getElementById('filesList');
+      const adminTextEl = document.getElementById('adminText');
+      const adminSendBtn = document.getElementById('adminSend');
+      const viewerModal = document.getElementById('viewerModal');
+      const viewerTitle = document.getElementById('viewerTitle');
+      const viewerBody = document.getElementById('viewerBody');
+      const viewerClose = document.getElementById('viewerClose');
+      let currentSession = '';
+      let filesCache = [];
+
+      async function api(path, opts) {
+        const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }
+
+      function fmtTime(iso) {
+        try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+      }
+
+      async function loadSessions() {
+        sessionsEl.innerHTML = '<div class="section">Loading…</div>';
+        try {
+          const data = await api('/api/admin/sessions');
+          if (!data.length) {
+            sessionsEl.innerHTML = '<div class="empty">No sessions yet.</div>';
+            return;
+          }
+          sessionsEl.innerHTML = '';
+          for (const s of data) {
+            const div = document.createElement('div');
+            div.className = 'session';
+            div.innerHTML = `<div><strong>${s.sessionId}</strong></div><div class="meta">${s.count} messages • ${s.lastAt ? fmtTime(s.lastAt) : '—'}</div>`;
+            // Append file count into the meta line if available
+            try {
+              const metaEl = div.querySelector('.meta');
+              if (metaEl && typeof s.fileCount === 'number') {
+                metaEl.textContent = (metaEl.textContent || '') + ' - ' + s.fileCount + ' files';
+              }
+            } catch {}
+            div.onclick = () => selectSession(s.sessionId);
+            sessionsEl.appendChild(div);
+          }
+        } catch (e) {
+          sessionsEl.innerHTML = '<div class="section">Failed to load sessions.</div>';
+        }
+      }
+
+      async function selectSession(id) {
+        currentSession = id;
+        currentSessionEl.textContent = id ? 'Session: ' + id : 'No session selected';
+        await loadFiles();
+        await loadMessages();
+      }
+
+      async function loadMessages() {
+        if (!currentSession) { messagesEl.innerHTML = '<div class="empty">Select a session.</div>'; return; }
+        messagesEl.innerHTML = '';
+        try {
+          const msgs = await api('/api/admin/messages?sessionId=' + encodeURIComponent(currentSession));
+          if (!msgs.length) { messagesEl.innerHTML = '<div class="empty">No messages.</div>'; return; }
+          for (const m of msgs) {
+            const row = document.createElement('div');
+            row.className = 'msg ' + m.sender;
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            const time = document.createElement('div');
+            time.className = 'time';
+            time.textContent = fmtTime(m.createdAt);
+
+            const match = /^Uploaded file:\s*(.+)$/.exec(m.text || '');
+            if (match) {
+              const name = match[1];
+              const rec = findFileByName(name);
+              if (rec) {
+                bubble.appendChild(document.createTextNode('Uploaded file: '));
+                const a = document.createElement('a');
+                a.href = rec.url;
+                a.textContent = name;
+                a.target = '_blank';
+                a.rel = 'noreferrer';
+                a.addEventListener('click', (e) => { e.preventDefault(); openViewer(rec.url, rec.mimeType, name); });
+                bubble.appendChild(a);
+              } else {
+                bubble.textContent = m.text;
+              }
+            } else {
+              bubble.textContent = m.text;
+            }
+            row.appendChild(bubble);
+            row.appendChild(time);
+            messagesEl.appendChild(row);
+          }
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } catch (e) {
+          messagesEl.innerHTML = '<div class="section">Failed to load messages.</div>';
+        }
+      }
+
+      async function loadFiles() {
+        if (!currentSession) { filesListEl.innerHTML = ''; return; }
+        filesListEl.innerHTML = '<div class="meta">Loading…</div>';
+        try {
+          const files = await api('/api/admin/files?sessionId=' + encodeURIComponent(currentSession));
+          filesCache = files || [];
+          if (!files.length) { filesListEl.innerHTML = '<div class="meta">No files.</div>'; return; }
+          filesListEl.innerHTML = '';
+          for (const f of files) {
+            const row = document.createElement('div');
+            row.className = 'file';
+            const size = f.sizeBytes ? ` • ${(Number(f.sizeBytes)/1024).toFixed(1)} KB` : '';
+            row.innerHTML = `<div><a href="${f.url}" target="_blank" rel="noreferrer">${escapeHtml(f.originalName)}</a><div class="meta">${fmtTime(f.createdAt)}${size}</div></div>`;
+            filesListEl.appendChild(row);
+            // Append delete action
+            (function(){
+              try {
+                const actions = document.createElement('div');
+                const btn = document.createElement('button');
+                btn.textContent = 'Delete';
+                btn.addEventListener('click', async () => {
+                  await api('/api/admin/file?id=' + encodeURIComponent(f.id), { method: 'DELETE' });
+                  await loadFiles();
+                });
+                actions.appendChild(btn);
+                row.appendChild(actions);
+              } catch {}
+            })();
+          }
+          // Intercept file link clicks to open inline viewer
+          filesListEl.querySelectorAll('a').forEach(a => {
+            a.addEventListener('click', (e) => {
+              const href = (e.currentTarget as HTMLAnchorElement).getAttribute('href');
+              if (!href) return;
+              e.preventDefault();
+              const rec = filesCache.find(f => f.url === href);
+              openViewer(href, rec?.mimeType, rec?.originalName || href);
+            })
+          })
+        } catch (e) {
+          filesListEl.innerHTML = '<div class="meta">Failed to load files.</div>';
+        }
+      }
+
+      function findFileByName(name) {
+        if (!filesCache || !filesCache.length) return null;
+        for (let i = filesCache.length - 1; i >= 0; i--) {
+          if ((filesCache[i].originalName || '').trim() === name.trim()) return filesCache[i];
+        }
+        return null;
+      }
+
+      function openViewer(url, mime, title) {
+        document.getElementById('viewerTitle').textContent = title || 'File';
+        const body = document.getElementById('viewerBody');
+        body.innerHTML = '';
+        const ext = (url.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
+        if ((mime && mime.startsWith('image/')) || ['png','jpg','jpeg','gif','webp','bmp','svg'].includes(ext)) {
+          const img = document.createElement('img');
+          img.src = url; img.alt = title || 'image';
+          body.appendChild(img);
+        } else if ((mime && mime.includes('pdf')) || ext === 'pdf') {
+          const frame = document.createElement('iframe');
+          frame.src = url; body.appendChild(frame);
+        } else {
+          const frame = document.createElement('iframe');
+          frame.src = url; body.appendChild(frame);
+        }
+        (document.getElementById('viewerModal') as any).classList.add('show');
+      }
+
+      document.getElementById('viewerClose').addEventListener('click', () => (document.getElementById('viewerModal') as any).classList.remove('show'))
+      document.getElementById('viewerModal').addEventListener('click', (e) => { if (e.target === document.getElementById('viewerModal')) (document.getElementById('viewerModal') as any).classList.remove('show') })
+
+      function escapeHtml(s) {
+        return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+      }
+
+      async function clearCurrent() {
+        if (!currentSession) return;
+        await api('/api/admin/messages?sessionId=' + encodeURIComponent(currentSession), { method: 'DELETE' });
+        await loadSessions();
+        messagesEl.innerHTML = '<div class="empty">Cleared.</div>';
+      }
+
+      $('#refresh').onclick = loadSessions;
+      $('#clearSession').onclick = clearCurrent;
+      adminSendBtn.onclick = async () => {
+        if (!currentSession) return;
+        const text = (adminTextEl.value || '').trim();
+        if (!text) return;
+        await api('/api/admin/send', { method: 'POST', body: JSON.stringify({ sessionId: currentSession, text }) });
+        adminTextEl.value = '';
+        await loadMessages();
+      }
+
+      loadSessions();
+      // Poll sessions list every 5s
+      setInterval(() => { loadSessions(); if (currentSession) { loadFiles(); loadMessages(); } }, 5000);
+    </script>
+  </body>
+  </html>

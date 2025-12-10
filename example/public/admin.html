@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chatbot Admin · Chatbot1</title>
+    <style>
+      :root { --fg:#111; --muted:#666; --accent:#2563eb; --bg:#fafafa; --card:#fff; --border:#e5e7eb; }
+      * { box-sizing: border-box; }
+      body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:var(--fg); background:var(--bg); }
+      header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--card); position:sticky; top:0; z-index:2; }
+      header h1 { font-size:16px; margin:0; }
+      .status { color:var(--muted); font-size:12px; }
+      .wrap { max-width: 1040px; margin: 16px auto; padding: 0 16px; }
+      .tabs { display:flex; gap:6px; border-bottom:1px solid var(--border); position: sticky; top:49px; background:var(--bg); z-index:1; }
+      .tabs button { padding:8px 12px; border:1px solid var(--border); border-bottom:none; background:#f8fafc; cursor:pointer; border-top-left-radius:6px; border-top-right-radius:6px; }
+      .tabs button.active { background:var(--card); color:#111; font-weight:600; }
+      .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin-top:-1px; }
+      .row { display:flex; gap:16px; margin:10px 0; align-items:flex-start; }
+      .row label { width:220px; color:var(--muted); padding-top:6px; }
+      .row input[type="text"], .row input[type="number"], .row textarea, .row select { flex:1; padding:8px 10px; border-radius:6px; border:1px solid var(--border); background:#fff; }
+      .row input[type="color"] { width:60px; height:32px; padding:0; border:1px solid var(--border); background:#fff; border-radius:6px; }
+      .row .hint { color:var(--muted); font-size:12px; margin-top:4px; }
+      .toolbar { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+      button { padding:8px 12px; border-radius:6px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+      button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+      .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+      .subtle { color:var(--muted); }
+      .danger { color:#b91c1c; }
+      .mt8 { margin-top:8px; }
+      .mt16 { margin-top:16px; }
+      .mt24 { margin-top:24px; }
+      .hidden { display:none; }
+      .footer { text-align:center; color:var(--muted); padding:24px 0; font-size:12px; }
+      @media (max-width: 860px) { .two-col { grid-template-columns: 1fr; } .row { flex-direction:column; } .row label { width:auto; padding-top:0; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Chatbot Administration</h1>
+      <div class="status" id="status">Ready</div>
+    </header>
+    <div class="wrap">
+      <div class="tabs" id="tabs"></div>
+      <div class="card" id="panel"></div>
+      <div class="toolbar">
+        <a href="/" style="margin-right:auto;text-decoration:none">← Back to App</a>
+        <a href="/webui.html" style="margin-right:auto;text-decoration:none">Monitor WebUI</a>
+        <button id="reset">Reset to Defaults</button>
+        <button id="export">Export</button>
+        <label for="importFile" class="subtle" style="align-self:center;">Import:</label>
+        <input id="importFile" type="file" accept="application/json" />
+        <button id="save" class="primary">Save Changes</button>
+      
+        <button id="initDb">Init DB</button>
+      </div>
+      <div class="footer">Changes are persisted locally for the dev server. Your app reads these settings at runtime.</div>
+    </div>
+
+    <script>
+      const tabs = [
+        { id: 'general', label: 'General' },
+        { id: 'branding', label: 'Branding' },
+        { id: 'behavior', label: 'Behavior' },
+        { id: 'integrations', label: 'Integrations' },
+        { id: 'ai', label: 'AI' },
+        { id: 'vector', label: 'Vector DB' },
+        { id: 'security', label: 'Security' },
+        { id: 'export', label: 'Export/Import' },
+      ]
+
+      const $ = (s) => document.querySelector(s)
+      const $$ = (s) => document.querySelectorAll(s)
+      const tabsEl = $('#tabs')
+      const panelEl = $('#panel')
+      const statusEl = $('#status')
+
+      let settings = null
+      let activeTab = localStorage.getItem('admin-active-tab') || 'general'
+
+      function setStatus(msg, ok=true) {
+        statusEl.textContent = msg
+        statusEl.style.color = ok ? '#666' : '#b91c1c'
+        if (ok) { setTimeout(() => { statusEl.textContent = 'Ready' }, 2000) }
+      }
+
+      async function loadSettings() {
+        const res = await fetch('/api/admin/settings')
+        settings = await res.json()
+        renderTabs()
+        renderPanel()
+      }
+
+      async function saveSettings() {
+        collectFromForm()
+        const res = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) })
+        if (!res.ok) throw new Error('Save failed: ' + res.status)
+        setStatus('Saved')
+      }
+
+      async function resetSettings() {
+        await fetch('/api/admin/settings/reset', { method: 'POST' })
+        await loadSettings()
+        setStatus('Reset to defaults')
+      }
+
+      function val(id) { const el = document.getElementById(id); return el?.value }
+      function checked(id){ const el = document.getElementById(id); return !!el?.checked }
+
+      function collectFromForm() {
+        if (!settings) return
+        if (activeTab === 'general' || activeTab === 'branding' || activeTab === 'behavior' || activeTab === 'integrations' || activeTab === 'security' || activeTab==='export' || activeTab==='ai' || activeTab==='vector') {
+          settings.general.title = val('set-title') || settings.general.title
+          settings.general.defaultOpen = checked('set-defaultOpen')
+          settings.general.welcomeMessage = val('set-welcomeMessage') || ''
+          settings.general.launcherPosition = val('set-launcherPosition')
+          settings.behavior.maxHistory = Number(val('set-maxHistory') || settings.behavior.maxHistory)
+
+          settings.branding.primaryColor = val('set-primaryColor') || settings.branding.primaryColor
+          settings.branding.customCss = val('set-customCss') || ''
+
+          settings.behavior.replyDelayMs = Number(val('set-replyDelayMs') || 0)
+
+          settings.integrations.apiUrl = val('set-apiUrl') || settings.integrations.apiUrl
+          settings.integrations.apiAuthHeader = val('set-apiAuthHeader') || ''
+          settings.integrations.webhookUrl = val('set-webhookUrl') || ''
+
+          settings.security.dataRetentionDays = Number(val('set-dataRetentionDays') || settings.security.dataRetentionDays)
+          const allowed = val('set-allowedOrigins') || ''
+          settings.security.allowedOrigins = allowed.split(/\n|,|\s+/).map(s=>s.trim()).filter(Boolean)
+
+          // AI settings
+          settings.ai = settings.ai || {}
+          settings.ai.provider = (val('set-ai-provider') || settings.ai.provider || 'echo')
+          settings.ai.systemPrompt = val('set-ai-system') || settings.ai.systemPrompt || ''
+          settings.ai.temperature = Number(val('set-ai-temp') || settings.ai.temperature || 0.2)
+          settings.ai.maxTokens = Number(val('set-ai-maxTokens') || settings.ai.maxTokens || 256)
+          settings.ai.topP = Number(val('set-ai-topP') || settings.ai.topP || 1)
+          settings.ai.openai = settings.ai.openai || {}
+          settings.ai.openai.apiKey = val('set-openai-key') || settings.ai.openai.apiKey || ''
+          settings.ai.openai.baseUrl = val('set-openai-base') || settings.ai.openai.baseUrl || ''
+          settings.ai.openai.chatModel = val('set-openai-chat') || settings.ai.openai.chatModel || ''
+          settings.ai.openai.embeddingModel = val('set-openai-embed') || settings.ai.openai.embeddingModel || ''
+          settings.ai.ollama = settings.ai.ollama || {}
+          settings.ai.ollama.host = val('set-ollama-host') || settings.ai.ollama.host || ''
+          settings.ai.ollama.chatModel = val('set-ollama-chat') || settings.ai.ollama.chatModel || ''
+          settings.ai.ollama.embeddingModel = val('set-ollama-embed') || settings.ai.ollama.embeddingModel || ''
+          settings.ai.rag = settings.ai.rag || {}
+          settings.ai.rag.enabled = checked('set-rag-enabled')
+          settings.ai.rag.topK = Number(val('set-rag-topK') || settings.ai.rag.topK || 5)
+          settings.ai.rag.namespace = val('set-rag-namespace') || settings.ai.rag.namespace || ''
+          settings.ai.rag.useInChat = checked('set-rag-chat')
+          settings.ai.rag.filterBySession = checked('set-rag-filterSession')
+
+          // Vector DB (Pinecone)
+          settings.vector = settings.vector || {}
+          settings.vector.pinecone = settings.vector.pinecone || {}
+          settings.vector.pinecone.apiKey = val('set-pc-key') || settings.vector.pinecone.apiKey || ''
+          settings.vector.pinecone.indexHost = val('set-pc-host') || settings.vector.pinecone.indexHost || ''
+          settings.vector.pinecone.namespace = val('set-pc-namespace') || settings.vector.pinecone.namespace || ''
+          settings.vector.pinecone.topK = Number(val('set-pc-topK') || settings.vector.pinecone.topK || 5)
+        }
+      }
+
+      function renderTabs() {
+        tabsEl.innerHTML = ''
+        for (const t of tabs) {
+          const b = document.createElement('button')
+          b.textContent = t.label
+          b.className = t.id === activeTab ? 'active' : ''
+          b.onclick = () => { activeTab = t.id; localStorage.setItem('admin-active-tab', activeTab); renderTabs(); renderPanel() }
+          tabsEl.appendChild(b)
+        }
+      }
+
+      function renderPanel() {
+        if (!settings) { panelEl.textContent = 'Loading…'; return }
+        const s = settings
+        if (activeTab === 'general') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Chat Title</label><input id="set-title" type="text" value="${esc(s.general.title)}"></div>
+            <div class="row"><label>Default Open</label><div><input id="set-defaultOpen" type="checkbox" ${s.general.defaultOpen?'checked':''}/> <span class="hint">Opens chat panel on page load</span></div></div>
+            <div class="row"><label>Welcome Message</label><textarea id="set-welcomeMessage" rows="3">${esc(s.general.welcomeMessage)}</textarea></div>
+            <div class="row"><label>Launcher Position</label>
+              <select id="set-launcherPosition">
+                <option value="bottom-right" ${s.general.launcherPosition==='bottom-right'?'selected':''}>Bottom Right</option>
+                <option value="bottom-left" ${s.general.launcherPosition==='bottom-left'?'selected':''}>Bottom Left</option>
+              </select>
+            </div>
+            <div class="row"><label>Max History</label><input id="set-maxHistory" type="number" min="20" step="10" value="${Number(s.behavior.maxHistory)||200}"><div class="hint">Stored messages per session (dev mock)</div></div>
+          `
+        }
+        else if (activeTab === 'branding') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Primary Color</label><div style="display:flex;gap:8px;align-items:center"><input id="set-primaryColor" type="text" value="${esc(s.branding.primaryColor)}"><input type="color" value="${esc(s.branding.primaryColor)}" oninput="document.getElementById('set-primaryColor').value=this.value"></div></div>
+            <div class="row"><label>Custom CSS</label><textarea id="set-customCss" rows="6" placeholder="/* overrides */">${esc(s.branding.customCss)}</textarea></div>
+          `
+        }
+        else if (activeTab === 'behavior') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Reply Delay (ms)</label><input id="set-replyDelayMs" type="number" min="0" step="100" value="${Number(s.behavior.replyDelayMs)||0}"><div class="hint">Artificial delay to simulate typing</div></div>
+          `
+        }
+        else if (activeTab === 'integrations') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Chat API URL</label><input id="set-apiUrl" type="text" value="${esc(s.integrations.apiUrl)}"><div class="hint">Endpoint the widget calls</div></div>
+            <div class="row"><label>API Auth Header</label><input id="set-apiAuthHeader" type="text" value="${esc(s.integrations.apiAuthHeader)}"><div class="hint">Optional header: e.g. Bearer token</div></div>
+            <div class="row"><label>Transcript Webhook</label><input id="set-webhookUrl" type="text" value="${esc(s.integrations.webhookUrl)}"><div class="hint">Where to POST transcripts (not implemented in mock)</div></div>
+            <div class="row"><label>Test Message</label><div class="two-col"><input id="testText" type="text" placeholder="Hello" value="Hello"><div><button onclick="testApi()">Send Test</button><div id="testResult" class="mt8 subtle"></div></div></div></div>
+          `
+          window.testApi = async function() {
+            collectFromForm()
+            const msg = document.getElementById('testText').value || 'Hello'
+            try {
+              const res = await fetch(settings.integrations.apiUrl || '/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sessionId:'admin-test', message: msg }) })
+              const data = await res.json()
+              document.getElementById('testResult').textContent = 'Reply: ' + (data.reply || '')
+            } catch(e) {
+              document.getElementById('testResult').textContent = 'Error: ' + e
+            }
+          }
+        }
+        else if (activeTab === 'ai') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Provider</label>
+              <select id="set-ai-provider">
+                <option value="echo" ${s.ai?.provider==='echo'?'selected':''}>Echo (dev)</option>
+                <option value="openai" ${s.ai?.provider==='openai'?'selected':''}>OpenAI</option>
+                <option value="ollama" ${s.ai?.provider==='ollama'?'selected':''}>Ollama</option>
+              </select>
+            </div>
+            <div class="row"><label>System Prompt</label><textarea id="set-ai-system" rows="4" placeholder="You are a helpful assistant.">${esc(s.ai?.systemPrompt||'')}</textarea></div>
+            <div class="row"><label>Temperature</label><input id="set-ai-temp" type="number" step="0.1" min="0" max="2" value="${Number(s.ai?.temperature ?? 0.2)}"></div>
+            <div class="row"><label>Max Tokens</label><input id="set-ai-maxTokens" type="number" min="1" step="1" value="${Number(s.ai?.maxTokens ?? 256)}"></div>
+            <div class="row"><label>Top P</label><input id="set-ai-topP" type="number" step="0.05" min="0" max="1" value="${Number(s.ai?.topP ?? 1)}"></div>
+            <hr class="mt16"/>
+            <div class="two-col">
+              <div>
+                <h3>OpenAI</h3>
+                <div class="row"><label>API Key</label><input id="set-openai-key" type="text" value="${esc(s.ai?.openai?.apiKey||'')}"></div>
+                <div class="row"><label>Base URL</label><input id="set-openai-base" type="text" value="${esc(s.ai?.openai?.baseUrl||'https://api.openai.com/v1')}"></div>
+                <div class="row"><label>Chat Model</label><input id="set-openai-chat" type="text" value="${esc(s.ai?.openai?.chatModel||'gpt-4o-mini')}"></div>
+                <div class="row"><label>Embedding Model</label><input id="set-openai-embed" type="text" value="${esc(s.ai?.openai?.embeddingModel||'text-embedding-3-small')}"></div>
+              </div>
+              <div>
+                <h3>Ollama</h3>
+                <div class="row"><label>Host</label><input id="set-ollama-host" type="text" value="${esc(s.ai?.ollama?.host||'http://localhost:11434')}"></div>
+                <div class="row"><label>Chat Model</label><input id="set-ollama-chat" type="text" value="${esc(s.ai?.ollama?.chatModel||'llama3')}"></div>
+                <div class="row"><label>Embedding Model</label><input id="set-ollama-embed" type="text" value="${esc(s.ai?.ollama?.embeddingModel||'nomic-embed-text')}"></div>
+              </div>
+            </div>
+            <hr class="mt16"/>
+            <div class="row"><label>RAG (Pinecone)</label>
+              <div>
+                <input id="set-rag-enabled" type="checkbox" ${s.ai?.rag?.enabled?'checked':''}/> Enable
+                <div class="mt8">
+                  <label style="width:auto;margin-right:8px;">Top K</label><input id="set-rag-topK" type="number" min="1" step="1" value="${Number(s.ai?.rag?.topK||5)}" style="width:120px;">
+                </div>
+                <div class="mt8">
+                  <label style="width:auto;margin-right:8px;">Namespace</label><input id="set-rag-namespace" type="text" value="${esc(s.ai?.rag?.namespace||'default')}" style="width:220px;">
+                </div>
+                <div class="mt8">
+                  <input id="set-rag-chat" type="checkbox" ${s.ai?.rag?.useInChat?'checked':''}/> Use in Chat completions
+                </div>
+                <div class="mt8">
+                  <input id="set-rag-filterSession" type="checkbox" ${s.ai?.rag?.filterBySession?'checked':''}/> Filter by Session (metadata)
+                </div>
+              </div>
+            </div>
+            <div class="row"><label>Test Chat</label>
+              <div class="two-col"><input id="aiTestText" type="text" placeholder="Ask something" value="Hello">
+                <div><button onclick="testAI()">Run Test</button><div id="aiTestResult" class="mt8 subtle"></div></div>
+              </div>
+            </div>
+          `
+          window.testAI = async function() {
+            setStatus('Testing AI...')
+            try {
+              const txt = (document.getElementById('aiTestText').value || 'Hello')
+              const res = await fetch('/api/chat', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sessionId:'admin-ai-test', message: txt }) })
+              const data = await res.json()
+              document.getElementById('aiTestResult').textContent = 'Reply: ' + (data.reply || '')
+              setStatus('Ready')
+            } catch(e) {
+              document.getElementById('aiTestResult').textContent = 'Error: ' + e
+              setStatus('AI test failed', false)
+            }
+          }
+        }
+        else if (activeTab === 'vector') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Pinecone API Key</label><input id="set-pc-key" type="text" value="${esc(s.vector?.pinecone?.apiKey||'')}"></div>
+            <div class="row"><label>Pinecone Index Host</label><input id="set-pc-host" type="text" placeholder="https://YOUR-INDEX.svc.YOUR-PROJECT.pinecone.io" value="${esc(s.vector?.pinecone?.indexHost||'')}"></div>
+            <div class="row"><label>Namespace</label><input id="set-pc-namespace" type="text" value="${esc(s.vector?.pinecone?.namespace||'default')}"></div>
+            <div class="row"><label>Top K</label><input id="set-pc-topK" type="number" min="1" step="1" value="${Number(s.vector?.pinecone?.topK||5)}"></div>
+            <hr class="mt16"/>
+            <div class="row"><label>Upsert Messages</label>
+              <div class="two-col">
+                <div>
+                  <input id="upsertSessionId" type="text" placeholder="session id" value="admin-ai-test">
+                  <div class="hint">Session to upsert from.</div>
+                </div>
+                <div>
+                  <input id="upsertLimit" type="number" min="1" step="1" value="20">
+                  <div class="hint">How many most-recent messages.</div>
+                </div>
+                <div>
+                  <button onclick="upsertMsgs()">Upsert</button>
+                  <div id="upsertResult" class="mt8 subtle"></div>
+                </div>
+              </div>
+            </div>
+            <div class="row"><label>Query</label>
+              <div class="two-col">
+                <input id="vqQuery" type="text" placeholder="find docs about ..." value="pricing">
+                <div>
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <input id="vqSessionId" type="text" placeholder="optional sessionId filter" style="width:220px;">
+                    <button onclick="testQuery()">Search</button>
+                  </div>
+                  <pre id="vqResult" class="mt8 subtle" style="max-height:220px;overflow:auto;border:1px solid var(--border);padding:8px;border-radius:6px;background:#f8fafc;"></pre>
+                </div>
+              </div>
+            </div>
+          `
+          window.upsertMsgs = async function() {
+            setStatus('Upserting...')
+            try {
+              const sessionId = document.getElementById('upsertSessionId').value || 'admin-ai-test'
+              const limit = Number(document.getElementById('upsertLimit').value || 20)
+              const r = await fetch('/api/vector/upsert-messages', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sessionId, limit }) })
+              const j = await r.json()
+              document.getElementById('upsertResult').textContent = 'Upserted: ' + (j.upserted || 0)
+              setStatus('Ready')
+            } catch (e) {
+              document.getElementById('upsertResult').textContent = 'Error: ' + e
+              setStatus('Upsert failed', false)
+            }
+          }
+          window.testQuery = async function() {
+            setStatus('Querying...')
+            try {
+              const query = document.getElementById('vqQuery').value || 'hello'
+              const sessionId = document.getElementById('vqSessionId').value || undefined
+              const r = await fetch('/api/vector/query', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query, sessionId }) })
+              const j = await r.json()
+              document.getElementById('vqResult').textContent = JSON.stringify(j.matches || j, null, 2)
+              setStatus('Ready')
+            } catch (e) {
+              document.getElementById('vqResult').textContent = 'Error: ' + e
+              setStatus('Query failed', false)
+            }
+          }
+        }
+        else if (activeTab === 'security') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Data Retention (days)</label><input id="set-dataRetentionDays" type="number" min="1" step="1" value="${Number(s.security.dataRetentionDays)||30}"></div>
+            <div class="row"><label>Allowed Origins</label><textarea id="set-allowedOrigins" rows="4" placeholder="* or one per line">${esc((s.security.allowedOrigins||[]).join('\n'))}</textarea><div class="hint">Not enforced in dev mock</div></div>
+          `
+        }
+        else if (activeTab === 'export') {
+          panelEl.innerHTML = `
+            <p class="subtle">Export creates a JSON snapshot of your current settings. Import replaces all current settings.</p>
+            <pre class="mt16 subtle" style="max-height:260px;overflow:auto;border:1px solid var(--border);padding:8px;border-radius:6px;background:#f8fafc;">${esc(JSON.stringify(s, null, 2))}</pre>
+          `
+        }
+      }
+
+      function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])) }
+
+      document.getElementById('save').onclick = () => saveSettings().catch(err => setStatus(String(err), false))
+      document.getElementById('reset').onclick = () => resetSettings().catch(err => setStatus(String(err), false))
+      document.getElementById('export').onclick = async () => {
+        const res = await fetch('/api/admin/settings')
+        const data = await res.json()
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'chatbot-settings.json'
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+      document.getElementById('importFile').addEventListener('change', async (e) => {
+        const f = e.target.files?.[0]
+        if (!f) return
+        const txt = await f.text()
+        try {
+          const obj = JSON.parse(txt)
+          const res = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) })
+          if (!res.ok) throw new Error('Import failed: ' + res.status)
+          await loadSettings()
+          setStatus('Imported settings')
+        } catch(err) { setStatus(String(err), false) }
+        e.target.value = ''
+      })
+
+      loadSettings().catch(err => setStatus(String(err), false))
+          document.addEventListener('DOMContentLoaded', () => {
+        const initBtn = document.getElementById('initDb');
+        if (initBtn) {
+          initBtn.addEventListener('click', async () => {
+            try {
+              const res = await fetch('/api/admin/db/init', { method: 'POST' });
+              const j = await res.json();
+              if (res.ok && j?.ok) {
+                setStatus('DB initialized');
+              } else {
+                setStatus('DB init failed', false);
+              }
+            } catch {
+              setStatus('DB init failed', false);
+            }
+          });
+        }
+      });</script>
+  </body>
+  </html>

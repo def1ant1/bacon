@@ -1,0 +1,28 @@
+{
+  "name": "chatbot1-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --open"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "customer-support-chat-widget": "file:..",
+    "pg": "^8.13.1",
+    "dotenv": "^16.4.5",
+    "busboy": "^1.6.0",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.8.0",
+    "cheerio": "^1.0.0-rc.12"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  }
+}
