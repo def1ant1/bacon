@@ -1,4 +1,5 @@
 import { AiProvider, BaconServerConfig, ChatMessage, MessagePipeline, StorageAdapter } from './types'
+import { maskPii } from './security'
 import { AutomationRuleEngine } from './automation-rules'
 import { KnowledgeBaseService } from './kb/service'
 import { InboxService } from './inbox'
@@ -22,7 +23,8 @@ export class Pipeline implements MessagePipeline {
   }
 
   async handleUserMessage(sessionId: string, text: string): Promise<ChatMessage> {
-    await this.storage.recordMessage(sessionId, 'user', text, this.maxHistory())
+    const sanitizedText = maskPii(text)
+    await this.storage.recordMessage(sessionId, 'user', sanitizedText, this.maxHistory())
     await this.automation?.handleMessageReceived({ sessionId, text, source: 'message' })
     const history = await this.storage.listMessages(sessionId)
     let assistantReply = 'temporarily unavailable'

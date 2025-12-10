@@ -284,6 +284,10 @@ export interface BaconServerConfig {
     registry?: import('./plugins/registry').PluginRegistry
   }
   automation?: import('./automation-rules').AutomationRuntimeConfig
+  security?: {
+    blocklist?: string[]
+    rateLimit?: { windowMs?: number; max?: number }
+  }
 }
 
 export interface MessagePipeline {
