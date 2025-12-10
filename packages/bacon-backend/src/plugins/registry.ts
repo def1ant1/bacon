@@ -66,8 +66,21 @@ export class PluginRegistry {
     while (attempt < retryCfg.attempts) {
       try {
         const result = await action.execute(runtimeCtx, input)
-        audit({ status: 'ok', meta: { attempt } })
-        return result
+        // Many third-party actions return `{ ok: false, error: '...' }` instead of throwing.
+        // We treat those responses as retryable failures so that audit logs reflect the
+        // real outcome and configured backoff/retry behavior is honored.
+        if (result?.ok) {
+          audit({ status: 'ok', meta: { attempt } })
+          return result
+        }
+
+        attempt += 1
+        const shouldRetry = attempt < retryCfg.attempts
+        const errorMessage = result?.error || 'action returned ok=false without an error message'
+        audit({ status: 'error', error: errorMessage, meta: { attempt } })
+        this.logger?.warn?.(`[plugins] action ${pluginId}:${actionName} returned ok=false`, { error: errorMessage })
+        if (!shouldRetry) return result
+        await new Promise((resolve) => setTimeout(resolve, retryCfg.backoffMs * attempt))
       } catch (err: any) {
         attempt += 1
         const shouldRetry = attempt < retryCfg.attempts

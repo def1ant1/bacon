@@ -54,6 +54,36 @@ describe('plugin registry', () => {
     expect(attempts).toBe(2)
     expect(audit.some((a) => a.status === 'error')).toBe(true)
   })
+
+  it('retries and audits when an action returns ok=false without throwing', async () => {
+    const audit: any[] = []
+    const registry = new PluginRegistry({ auditSink: (entry) => audit.push(entry), logger: console })
+    let attempts = 0
+    registry.register({
+      id: 'soft-fail-plugin',
+      name: 'Soft Fail Plugin',
+      version: '1.0.0',
+      settings: { id: 'soft-fail-plugin', title: 'Soft Fail', version: '1.0.0', schema: { type: 'object', default: {} } },
+      actions: {
+        flaky: {
+          name: 'flaky',
+          retry: { attempts: 2, backoffMs: 1 },
+          execute: vi.fn(async () => {
+            attempts += 1
+            // First call returns ok=false, second succeeds, simulating APIs that
+            // signal failure via the response object instead of throwing.
+            if (attempts === 1) return { ok: false, error: 'missing credentials' }
+            return { ok: true, data: { attempts } }
+          }),
+        },
+      },
+    })
+
+    const result = await registry.invokeAction('soft-fail-plugin', 'flaky', baseCtx, {})
+    expect(result.ok).toBe(true)
+    expect(attempts).toBe(2)
+    expect(audit.some((a) => a.status === 'error' && a.error?.includes('missing credentials'))).toBe(true)
+  })
 })
 
 describe('flow engine integration with plugins', () => {
