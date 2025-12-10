@@ -1,5 +1,12 @@
 import { PluginDefinition } from '../../src/plugins/types'
 
+const normalizeInbound = (payload: any) => ({
+  externalUserId: String(payload.From || payload.from || payload.sender || 'unknown'),
+  text: String(payload.Body || payload.body || payload.text || ''),
+  providerMessageId: payload.MessageSid || payload.SmsMessageSid || payload.Sid || payload.sid,
+  metadata: { to: payload.To || payload.to, profileName: payload.ProfileName || payload.profileName },
+})
+
 const adapter = {
   send(opts: { from: string; to: string; body: string }) {
     if (!opts.from || !opts.to) return { ok: false, error: 'missing_numbers' }
@@ -36,14 +43,11 @@ const plugin: PluginDefinition = {
   channels: {
     whatsapp: {
       channel: 'whatsapp',
-      validatePayload: (payload) => {
-        const issues: string[] = []
-        if (!payload.to) issues.push('missing to')
-        if (!payload.body) issues.push('missing body')
-        return { ok: issues.length === 0, issues }
-      },
+      displayName: 'Twilio WhatsApp',
+      capabilities: { inbound: true, outbound: true },
+      normalizeInbound,
       sendMessage: async (ctx, payload) => {
-        const res = adapter.send({ from: ctx.settings.fromNumber, to: payload.to, body: payload.body })
+        const res = adapter.send({ from: ctx.settings.fromNumber, to: payload.metadata?.to || (payload as any).to, body: payload.text })
         return { ok: res.ok, providerMessageId: res.sid, error: res.error }
       },
     },

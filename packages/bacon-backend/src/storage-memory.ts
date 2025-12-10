@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
-import { ChatMessage, Sender, StorageAdapter, StoredFile } from './types'
+import { ChannelMapping, ChannelMessageReceipt, ChatMessage, Sender, StorageAdapter, StoredFile } from './types'
 
 function nowIso() {
   return new Date().toISOString()
@@ -11,6 +11,8 @@ function nowIso() {
 export class MemoryStorage implements StorageAdapter {
   private messages = new Map<string, ChatMessage[]>()
   private files = new Map<string, StoredFile[]>()
+  private channelMappings = new Map<string, { mapping: ChannelMapping; createdAt: string; updatedAt: string }>()
+  private channelReceipts = new Set<string>()
 
   async recordMessage(sessionId: string, sender: Sender, text: string, maxHistory: number): Promise<ChatMessage> {
     const msg: ChatMessage = {
@@ -87,6 +89,62 @@ export class MemoryStorage implements StorageAdapter {
       const kept = msgs.filter((m) => new Date(m.createdAt).getTime() >= cutoff)
       if (kept.length === 0) this.messages.delete(sessionId)
       else this.messages.set(sessionId, kept)
+    }
+  }
+
+  async linkChannelConversation(input: {
+    channel: string
+    externalUserId: string
+    sessionIdHint?: string
+    metadata?: Record<string, any>
+  }): Promise<{ mapping: ChannelMapping; created: boolean }> {
+    const key = `${input.channel}::${input.externalUserId}`
+    const now = nowIso()
+    const existing = this.channelMappings.get(key)
+    if (existing) {
+      const next: ChannelMapping = {
+        ...existing.mapping,
+        metadata: { ...(existing.mapping.metadata || {}), ...(input.metadata || {}) },
+        updatedAt: now,
+      }
+      this.channelMappings.set(key, { mapping: next, createdAt: existing.createdAt, updatedAt: now })
+      return { mapping: next, created: false }
+    }
+    const mapping: ChannelMapping = {
+      id: uuidv4(),
+      channel: input.channel,
+      externalUserId: input.externalUserId,
+      sessionId: input.sessionIdHint || input.externalUserId || uuidv4(),
+      metadata: input.metadata,
+      createdAt: now,
+      updatedAt: now,
+    }
+    this.channelMappings.set(key, { mapping, createdAt: now, updatedAt: now })
+    return { mapping, created: true }
+  }
+
+  async getChannelMapping(channel: string, externalUserId: string): Promise<ChannelMapping | null> {
+    const rec = this.channelMappings.get(`${channel}::${externalUserId}`)
+    return rec?.mapping || null
+  }
+
+  async recordChannelMessageReceipt(entry: {
+    channel: string
+    externalUserId: string
+    sessionId: string
+    providerMessageId?: string
+  }): Promise<ChannelMessageReceipt> {
+    const key = `${entry.channel}::${entry.providerMessageId || uuidv4()}`
+    const duplicate = this.channelReceipts.has(key)
+    this.channelReceipts.add(key)
+    return {
+      id: uuidv4(),
+      channel: entry.channel,
+      externalUserId: entry.externalUserId,
+      sessionId: entry.sessionId,
+      providerMessageId: entry.providerMessageId,
+      createdAt: nowIso(),
+      duplicate,
     }
   }
 }

@@ -22,6 +22,26 @@ export interface StoredFile {
   url?: string
 }
 
+export interface ChannelMapping {
+  id: string
+  channel: string
+  externalUserId: string
+  sessionId: string
+  metadata?: Record<string, any>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ChannelMessageReceipt {
+  id: string
+  channel: string
+  externalUserId: string
+  sessionId: string
+  providerMessageId?: string
+  createdAt: string
+  duplicate?: boolean
+}
+
 export interface AdminSettings {
   general: {
     title: string
@@ -78,6 +98,19 @@ export interface StorageAdapter {
   listFiles(sessionId: string): Promise<StoredFile[]>
   deleteFile(id: string): Promise<void>
   retentionSweep(retentionDays: number): Promise<void>
+  linkChannelConversation(input: {
+    channel: string
+    externalUserId: string
+    sessionIdHint?: string
+    metadata?: Record<string, any>
+  }): Promise<{ mapping: ChannelMapping; created: boolean }>
+  getChannelMapping(channel: string, externalUserId: string): Promise<ChannelMapping | null>
+  recordChannelMessageReceipt(entry: {
+    channel: string
+    externalUserId: string
+    sessionId: string
+    providerMessageId?: string
+  }): Promise<ChannelMessageReceipt>
 }
 
 export interface AiProvider {
@@ -176,6 +209,10 @@ export interface BaconServerConfig {
   kb?: { topK?: number }
   brandId?: string
   botId?: string
+  channels?: {
+    router?: import('./channels').ChannelRouter
+    adapters?: import('./channels').ChannelAdapter[]
+  }
   flows?: {
     repository?: import('./flows/repository').FlowRepository
     engine?: import('./flows/engine').FlowEngine
@@ -217,6 +254,9 @@ export interface BaconServerConfig {
     queue?: InboxQueueAdapter
     notifier?: any
   }
+  plugins?: {
+    registry?: import('./plugins/registry').PluginRegistry
+  }
 }
 
 export interface MessagePipeline {
@@ -232,4 +272,5 @@ export interface BaconServer {
   mountToExpress?: (app: any) => void
   wss?: WebSocketServer
   config: Required<BaconServerConfig>
+  channels: import('./channels').ChannelRouter
 }

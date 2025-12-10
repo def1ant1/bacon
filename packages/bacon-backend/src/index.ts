@@ -23,6 +23,7 @@ import { FlowEngine } from './flows/engine'
 import { buildFlowApi } from './flows/api'
 import jwt from 'jsonwebtoken'
 import { AuthService } from './auth'
+import { ChannelRouter, buildWebWidgetAdapter } from './channels'
 
 const defaultSettings = {
   general: {
@@ -142,6 +143,10 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     defaultBrandId: config.brandId || 'default',
   })
   const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb, inbox)
+  const channelRouter = config.channels?.router || new ChannelRouter({ storage, pipeline, logger })
+  channelRouter.register(buildWebWidgetAdapter())
+  config.channels?.adapters?.forEach((adapter) => channelRouter.register(adapter))
+  config.plugins?.registry?.listChannelAdapters?.().forEach((adapter: any) => channelRouter.register(adapter))
   const uploadsDir = config.fileHandling?.uploadsDir || path.join(process.cwd(), 'uploads')
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -207,10 +212,13 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   }
 
   async function handleChat(body: any, res: any) {
-    const sessionId = String(body?.sessionId || 'dev-session')
-    const message = String(body?.message || '')
-    const reply = await pipeline.handleUserMessage(sessionId, message)
-    sendJson(res, { reply: reply.text })
+    try {
+      const result = await channelRouter.ingest('web', body)
+      sendJson(res, { reply: result.botMessage?.text, sessionId: result.sessionId, duplicate: result.duplicate })
+    } catch (err: any) {
+      logger.warn('[channels] web handler failed', err)
+      sendJson(res, { error: 'channel_ingest_failed', message: err?.message }, 400)
+    }
   }
 
   async function handleAdminSettings(req: any, res: any) {
@@ -270,6 +278,29 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
     const maybeFlowHandled = await flowApi(req, res, url)
     if (maybeFlowHandled !== false) return
+
+    if (url.pathname.startsWith('/api/channels/')) {
+      if (req.method !== 'POST') return sendJson(res, { error: 'method_not_allowed' }, 405)
+      const parts = url.pathname.split('/').filter(Boolean)
+      const channel = parts[2]
+      const action = parts[3] || 'inbound'
+      if (!channel || action !== 'inbound') return sendJson(res, { error: 'unsupported_channel_route' }, 404)
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk as Buffer)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+      try {
+        const result = await channelRouter.ingest(channel, body)
+        return sendJson(res, {
+          ok: true,
+          sessionId: result.sessionId,
+          duplicate: result.duplicate || false,
+          reply: result.botMessage?.text,
+        })
+      } catch (err: any) {
+        logger.warn('[channels] inbound routing failure', err)
+        return sendJson(res, { error: 'channel_ingest_failed', message: err?.message }, 400)
+      }
+    }
 
     if (req.method === 'GET' && url.pathname === '/api/chat') {
       if (!pollingEnabled()) return sendJson(res, { error: 'http_polling_disabled' }, 404)
@@ -510,7 +541,8 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
   const server: BaconServer = {
     handler,
-    config: { ...config, settings },
+    config: { ...config, settings, channels: { ...(config.channels || {}), router: channelRouter }, plugins: config.plugins || {} },
+    channels: channelRouter,
     mountToExpress(app: any) {
       app.use(handler)
       if (websocketEnabled()) {
@@ -579,4 +611,5 @@ export { PostgresSettingsStore } from './settings-postgres'
 export { ProviderRegistry } from './ai/providers/registry'
 export { ProviderRouter } from './ai/provider-router'
 export { AgentChannelNotifier, InboxService, MemoryInboxQueue, PostgresInboxQueue, RedisInboxQueue } from './inbox'
+export { ChannelRouter, buildWebWidgetAdapter } from './channels'
 export type { BaconServerConfig, BaconServer, ChatMessage } from './types'
