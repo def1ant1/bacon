@@ -12,6 +12,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "customer-support-chat-widget": "file:..",
+    "bacon-backend": "file:../packages/bacon-backend",
     "pg": "^8.13.1",
     "dotenv": "^16.4.5",
     "busboy": "^1.6.0",

@@ -34,6 +34,10 @@
     "react-dom": "^18.0.0"
   },
   "devDependencies": {
+    "busboy": "^1.6.0",
+    "pg": "^8.13.1",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0",
     "typescript": "^5.0.0",
     "tsup": "^8.0.0",
     "@types/node": "^20.14.10",
