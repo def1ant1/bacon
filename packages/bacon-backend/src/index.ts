@@ -17,6 +17,9 @@ import { buildLlamaFromEnv } from './ai/providers/llama'
 import { ProviderRouter } from './ai/provider-router'
 import { ProviderName } from './ai/providers/types'
 import { createKnowledgeBase, KnowledgeBaseService } from './kb/service'
+import { MemoryFlowRepository, PostgresFlowRepository } from './flows/repository'
+import { FlowEngine } from './flows/engine'
+import { buildFlowApi } from './flows/api'
 
 const defaultSettings = {
   general: {
@@ -100,6 +103,16 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       .catch((err) => logger.warn('[settings] async load failed', err))
   }
   const storage = config.storage || new MemoryStorage()
+  const flowRepository =
+    config.flows?.repository ||
+    (config.storage instanceof PostgresStorage
+      ? new PostgresFlowRepository((config.storage as any).pool)
+      : new MemoryFlowRepository())
+  const flowApi = buildFlowApi({
+    repository: flowRepository,
+    engine: config.flows?.engine || new FlowEngine({ logger }),
+    authenticate: (req) => ensureAuth(req),
+  })
   const kb: KnowledgeBaseService | undefined = config.kb === null ? undefined : createKnowledgeBase(logger)
   const registry = config.providerRegistry || buildProviderRegistry(logger)
   const ai = config.ai || new ProviderRouter(registry, settings.ai.provider as ProviderName)
@@ -186,6 +199,9 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     const url = new URL(req.url || '/', 'http://localhost')
     if (req.method === 'GET' && url.pathname === '/healthz') return sendJson(res, { ok: true })
     if (req.method === 'GET' && url.pathname === '/readyz') return sendJson(res, { ready: true })
+
+    const maybeFlowHandled = await flowApi(req, res, url)
+    if (maybeFlowHandled !== false) return
 
     if (req.method === 'GET' && url.pathname === '/api/chat') {
       if (!pollingEnabled()) return sendJson(res, { error: 'http_polling_disabled' }, 404)
