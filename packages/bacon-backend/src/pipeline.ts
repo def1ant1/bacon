@@ -1,7 +1,13 @@
 import { AiProvider, BaconServerConfig, ChatMessage, MessagePipeline, StorageAdapter } from './types'
+import { KnowledgeBaseService } from './kb/service'
 
 export class Pipeline implements MessagePipeline {
-  constructor(private storage: StorageAdapter, private ai: AiProvider, private config: BaconServerConfig) {}
+  constructor(
+    private storage: StorageAdapter,
+    private ai: AiProvider,
+    private config: BaconServerConfig,
+    private kb?: KnowledgeBaseService,
+  ) {}
 
   private maxHistory() {
     return Number(this.config.behavior?.maxHistory ?? this.config.settings?.behavior?.maxHistory ?? 200)
@@ -11,9 +17,26 @@ export class Pipeline implements MessagePipeline {
     const msg = await this.storage.recordMessage(sessionId, 'user', text, this.maxHistory())
     const history = await this.storage.listMessages(sessionId)
     let assistantReply = 'temporarily unavailable'
+    let kbContext: string | null = null
+    try {
+      if (this.kb) {
+        const retrieval = await this.kb.retrieve(text, {
+          brandId: this.config.brandId || 'default',
+          botId: this.config.botId || 'default',
+          topK: this.config.kb?.topK ?? 5,
+        })
+        if (retrieval.chunks.length) {
+          kbContext = retrieval.chunks
+            .map((c, idx) => `(#${idx + 1}) ${c.content}`)
+            .join('\n\n')
+        }
+      }
+    } catch (err) {
+      this.config.logger?.warn?.('[kb] retrieval failed', err)
+    }
     try {
       const result = await this.ai.chat({
-        prompt: text,
+        prompt: kbContext ? `${text}\n\nContext:\n${kbContext}` : text,
         history: history.map((h) => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
         provider: this.config.settings?.ai?.provider,
       })

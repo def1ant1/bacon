@@ -115,6 +115,9 @@ export interface BaconServerConfig {
   settings?: Partial<AdminSettings>
   storage?: StorageAdapter
   ai?: AiProvider
+  kb?: { topK?: number }
+  brandId?: string
+  botId?: string
   transports?: {
     enableHttpPolling?: boolean
     enableWebSocket?: boolean
