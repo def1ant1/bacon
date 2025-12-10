@@ -4,6 +4,77 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 
+// Shared types for memory-backed storage used by the dev server and retention tests.
+export type Msg = { id: string; sender: 'user' | 'bot'; text: string; createdAt: string }
+export type FileRec = {
+  id: string
+  sessionId: string
+  originalName: string
+  mimeType?: string
+  sizeBytes?: number
+  storagePath: string
+  createdAt: string
+}
+
+export type RetentionJobOptions = {
+  memStore: Map<string, Msg[]>
+  memFiles: Map<string, FileRec[]>
+  pool?: any
+  ensureSchema?: () => Promise<void>
+  getRetentionDays: () => number
+  logger?: { info?: (...args: any[]) => void; warn?: (...args: any[]) => void; error?: (...args: any[]) => void }
+}
+
+/**
+ * Create a defensive retention job that prunes both in-memory and database
+ * records without risking the dev server crashing. The helper is exported so
+ * tests can validate both memory + DB flows without booting the Vite server.
+ */
+export function createRetentionJob(opts: RetentionJobOptions) {
+  const logger = opts.logger || console
+
+  const runSweep = async () => {
+    const daysRaw = Number(opts.getRetentionDays())
+    if (!Number.isFinite(daysRaw) || daysRaw < 0) {
+      logger.warn?.('[retention] invalid retention window, skipping sweep')
+      return
+    }
+    const days = daysRaw || 0
+    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000)
+
+    // Memory-backed store cleanup
+    for (const [sid, msgs] of opts.memStore.entries()) {
+      const lastMsg = msgs.at(-1)?.createdAt
+      const lastFile = opts.memFiles.get(sid)?.at(-1)?.createdAt
+      const lastAt = Math.max(
+        lastMsg ? new Date(lastMsg).getTime() : 0,
+        lastFile ? new Date(lastFile).getTime() : 0,
+      )
+      if (!lastAt || lastAt < cutoff.getTime()) {
+        opts.memStore.delete(sid)
+        opts.memFiles.delete(sid)
+      }
+    }
+
+    // Database cleanup (optional for DB mode)
+    if (opts.pool) {
+      await opts.ensureSchema?.()
+      await opts.pool.query('delete from chat_messages where created_at < $1', [cutoff])
+      await opts.pool.query('delete from chat_files where created_at < $1', [cutoff])
+      await opts.pool.query(
+        `delete from conversations where last_activity_at < $1`,
+        [cutoff],
+      )
+    }
+  }
+
+  const timer = setInterval(() => {
+    runSweep().catch((e) => logger.error?.('[retention] sweep failed', e))
+  }, 60_000)
+
+  return { timer, runSweep }
+}
+
 // Optional Postgres + env loader
 let Pool: any = null
 try {
@@ -137,9 +208,7 @@ export default defineConfig({
         const USE_DB = !!(process.env.DATABASE_URL && Pool)
 
         // In-memory fallback store (used if no DATABASE_URL)
-        type Msg = { id: string; sender: 'user' | 'bot'; text: string; createdAt: string }
         const memStore = new Map<string, Msg[]>() // sessionId -> messages
-        type FileRec = { id: string; sessionId: string; originalName: string; mimeType?: string; sizeBytes?: number; storagePath: string; createdAt: string }
         const memFiles = new Map<string, FileRec[]>() // sessionId -> files
 
         // Ensure uploads dir exists
@@ -413,19 +482,18 @@ export default defineConfig({
           return j
         }
 
-        // Simple retention job based on settings.security.dataRetentionDays
-        const retentionTimer = setInterval(() => {
-          try {
-            const days = Number(settings.security?.dataRetentionDays ?? 30)
-            const cutoff = Date.now() - days * 24 * 3600 * 1000
-            for (const [sid, msgs] of store.entries()) {
-              const last = msgs.at(-1)?.createdAt
-              if (last && new Date(last).getTime() < cutoff) {
-                store.delete(sid)
-              }
-            }
-          } catch {}
-        }, 60_000)
+        const { runSweep: runRetentionSweep } = createRetentionJob({
+          memStore,
+          memFiles,
+          pool,
+          ensureSchema,
+          getRetentionDays: () => Number(settings.security?.dataRetentionDays ?? 30),
+          logger: console,
+        })
+        // Run once on boot so dev sessions are trimmed immediately and expose
+        // the runner for tests/smoke checks.
+        runRetentionSweep().catch((e) => console.error('[retention] initial sweep failed', e))
+        ;(server as any).__runRetentionSweep = runRetentionSweep
         // Vite will dispose plugins on restart; no need to clearInterval explicitly
 
         server.middlewares.use(async (req, res, next) => {
