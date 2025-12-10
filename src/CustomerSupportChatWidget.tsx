@@ -6,8 +6,16 @@
 // - Calls a configurable backend chat API endpoint
 // - Simple message list with typing indicator and error handling
 
-import React, { useEffect, useState, useRef, FormEvent } from "react";
+import React, { useEffect, useState, useRef, FormEvent, useMemo } from "react";
 import "./CustomerSupportChatWidget.css";
+import { PollingTransport, PollingTransportOptions } from "./transports/PollingTransport";
+import {
+  Transport,
+  TransportFactory,
+  TransportState,
+  TransportOptions,
+} from "./transports/Transport";
+import { WebSocketTransport, WebSocketTransportOptions } from "./transports/WebSocketTransport";
 
 /**
  * Represents who sent a given chat message.
@@ -96,6 +104,22 @@ export interface CustomerSupportChatWidgetProps {
    * Defaults to 3000ms. Set to 0 to disable.
    */
   pollIntervalMs?: number;
+
+  /**
+   * Optional transport selector. Defaults to "polling" to preserve the
+   * previous fetch-based behavior, but can be set to "websocket" or a custom
+   * TransportFactory for enterprise deployments (e.g., mutual TLS gateways,
+   * message buses, or proprietary network stacks).
+   */
+  transport?: "polling" | "websocket" | TransportFactory;
+
+  /**
+   * Extended configuration passed directly to transports. This supports
+   * hardened defaults like TLS-only URLs, auth token injection, rate limits,
+   * or socket.io factories without bloating the public API surface. Values
+   * here override the top-level props where applicable.
+   */
+  transportOptions?: Partial<PollingTransportOptions & WebSocketTransportOptions>;
 }
 
 /**
@@ -145,6 +169,8 @@ export const CustomerSupportChatWidget: React.FC<
   uploadUrl,
   pollIntervalMs = 3000,
   welcomeMessage,
+  transport = "polling",
+  transportOptions,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -152,6 +178,12 @@ export const CustomerSupportChatWidget: React.FC<
   const [inputText, setInputText] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [transportInstance, setTransportInstance] = useState<Transport | null>(null);
+  const [connectionState, setConnectionState] = useState<TransportState>("idle");
+  const transportOverrides = useMemo(
+    () => transportOptions || {},
+    [transportOptions],
+  );
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -185,33 +217,74 @@ export const CustomerSupportChatWidget: React.FC<
   }, [messages, isOpen]);
 
   /**
-   * Periodically sync messages from the server so that admin/backend-sent
-   * messages appear in the widget. Uses GET {apiUrl or derived}/chat?sessionId=...
+   * Hydrate the transport layer and keep it pinned to the component lifecycle.
+   * WebSocket transports will automatically reconnect with backoff; polling
+   * transports keep the legacy behavior of periodic fetches. If WebSockets
+   * are unavailable (CSP, proxies, or old browsers), the widget gracefully
+   * falls back to polling with the same defaults as before.
    */
   useEffect(() => {
     if (!sessionId) return;
-    if (!pollIntervalMs || pollIntervalMs <= 0) return;
-    const messagesUrl = apiUrl.endsWith("/chat")
-      ? apiUrl
-      : apiUrl.replace(/\/$/, "") + "/chat";
+    const baseOptions: TransportOptions = {
+      apiUrl,
+      sessionId,
+      userIdentifier,
+      uploadUrl,
+      authToken: transportOverrides?.authToken,
+      headers: transportOverrides?.headers,
+      log: transportOverrides?.log,
+    };
 
-    let timer: any = null;
-    const load = async () => {
-      try {
-        const res = await fetch(
-          `${messagesUrl}?sessionId=${encodeURIComponent(sessionId)}`,
-        );
-        if (!res.ok) return;
-        const list = (await res.json()) as ChatMessage[];
-        setMessages(Array.isArray(list) ? list : []);
-      } catch {}
+    const buildTransport = (): Transport => {
+      if (typeof transport === "function") {
+        return transport(baseOptions);
+      }
+      if (transport === "websocket") {
+        try {
+          return new WebSocketTransport({
+            ...baseOptions,
+            ...transportOverrides,
+          } as WebSocketTransportOptions);
+        } catch (err) {
+          console.warn("WebSocket unavailable, falling back to polling", err);
+        }
+      }
+      return new PollingTransport({
+        ...baseOptions,
+        ...transportOverrides,
+        pollIntervalMs: transportOverrides?.pollIntervalMs ?? pollIntervalMs,
+      } as PollingTransportOptions);
     };
-    load();
-    timer = setInterval(load, pollIntervalMs);
+
+    const instance = buildTransport();
+    instance.setEventHandlers({
+      onOpen: () => setConnectionState("open"),
+      onClose: (reason) => {
+        setConnectionState("closed");
+        if (reason) setError(`Connection closed: ${reason}`);
+      },
+      onError: (err) => {
+        setConnectionState("error");
+        setError(err.message);
+      },
+      onMessage: (incoming) => {
+        if (Array.isArray(incoming)) {
+          setMessages(incoming);
+        } else {
+          setMessages((prev) => [...prev, incoming]);
+        }
+      },
+      onTelemetry: (event) => {
+        transportOverrides?.log?.("transport_event", event as any);
+      },
+    });
+    void instance.connect();
+    setTransportInstance(instance);
+
     return () => {
-      if (timer) clearInterval(timer);
+      void instance.disconnect("component_unmounted");
     };
-  }, [sessionId, apiUrl, pollIntervalMs]);
+  }, [sessionId, apiUrl, userIdentifier, uploadUrl, pollIntervalMs, transport, transportOverrides]);
 
   /**
    * Adds a message to local state.
@@ -248,24 +321,31 @@ export const CustomerSupportChatWidget: React.FC<
         userIdentifier,
       };
 
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      let data: ChatApiResponse | void;
+      if (transportInstance) {
+        data = await transportInstance.send(payload);
+      } else {
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok) {
-        throw new Error(
-          `Chat API responded with status ${response.status}: ${response.statusText}`,
-        );
+        if (!response.ok) {
+          throw new Error(
+            `Chat API responded with status ${response.status}: ${response.statusText}`,
+          );
+        }
+
+        data = (await response.json()) as ChatApiResponse;
       }
 
-      const data = (await response.json()) as ChatApiResponse;
-
-      // Add the bot's reply message.
-      addMessage("bot", data.reply || "I’m sorry, I didn’t receive a response.");
+      if (data?.reply) {
+        // Add the bot's reply message when the transport returns it (polling).
+        addMessage("bot", data.reply || "I’m sorry, I didn’t receive a response.");
+      }
     } catch (err) {
       console.error("Chat send error:", err);
       setError(
@@ -286,6 +366,16 @@ export const CustomerSupportChatWidget: React.FC<
     setIsLoading(true);
     setError(null);
     try {
+      if (transportInstance?.sendFile) {
+        const response = await transportInstance.sendFile(file, {
+          ...(userIdentifier || {}),
+        });
+        if (response) {
+          setMessages((prev) => [...prev, response]);
+          return;
+        }
+      }
+
       const form = new FormData();
       form.append("sessionId", sessionId);
       if (userIdentifier) {

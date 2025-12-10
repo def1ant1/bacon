@@ -48,7 +48,43 @@ export default App;
 - userIdentifier?: Record<string, string> — Identifiers for CRM lookup (e.g., { email, phone }).
 - primaryColor?: string — Accent color for header, launcher, and user bubble (sets --cs-primary).
 - defaultOpen?: boolean — If true, the chat panel starts open.
-- pollIntervalMs?: number — Message poll interval for GET /api/chat?sessionId=... (default 3000, set 0 to disable).
+- pollIntervalMs?: number — Message poll interval for GET /api/chat?sessionId=... (default 3000, set 0 to disable). Kept for backward compatibility; see transport below.
+- transport?: "polling" | "websocket" | TransportFactory — Choose the transport implementation. Defaults to polling so existing installs continue working.
+- transportOptions?: Partial<PollingTransportOptions & WebSocketTransportOptions> — Advanced knobs (auth token injection, headers, heartbeat/ping-pong timing, backoff controls, socket.io factory, TLS-only websocket URL overrides).
+
+## Transport configuration
+
+The widget now ships with a pluggable transport layer so you can opt into long-lived WebSocket connections or supply your own enterprise transport. Defaults remain polling to avoid extra dependencies.
+
+- **PollingTransport (default)**: zero-dependency long/short polling over HTTPS. Resilient with retry/backoff, configurable intervals, and auth header injection. Ideal for strict firewalls or CSP-limited environments.
+- **WebSocketTransport**: uses native `WebSocket` when available and can optionally accept a lightweight `socket.io-client` factory via `transportOptions.socketIoFactory` for legacy proxies. Supports heartbeat (ping/pong), reconnection with jittered backoff, ordered message flushing, and binary/file payloads where supported.
+- **Custom**: provide `transport={(opts) => new MyTransport(opts)}` to plug in proprietary gateways or message buses. Implement the `Transport` interface exported from `src/transports/Transport`.
+
+Example WebSocket-first configuration with graceful fallback:
+
+```tsx
+<CustomerSupportChatWidget
+  apiUrl="https://api.example.com/chat"
+  transport="websocket"
+  transportOptions={{
+    webSocketUrl: "wss://api.example.com/chat/ws",
+    heartbeatMs: 15000,
+    authToken: myToken, // injected as Authorization: Bearer ...
+    headers: { "X-Org": "enterprise" },
+    backoffBaseMs: 500,
+  }}
+  // When WebSockets are blocked, the widget automatically falls back to polling
+  // using the same apiUrl and headers.
+/>
+```
+
+Production hardening tips baked into the transports:
+
+- Timeouts: `PollingTransport` supports `longPollTimeoutMs` and will abort hung requests before retrying.
+- Heartbeats: `WebSocketTransport` pings periodically via JSON `{ type: "ping" }` to detect dead connections.
+- Auth: `transportOptions.authToken` and `transportOptions.headers` apply to all requests/frames.
+- Backoff: both transports expose `backoffBaseMs`/`backoffMaxMs` to smooth reconnect storms.
+- Rate limits: keep `pollIntervalMs` reasonable (>= 1-3s) and adjust backoff for surge control.
 
 ## Theming
 
