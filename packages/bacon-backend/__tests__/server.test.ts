@@ -37,7 +37,12 @@ describe('createBaconServer', () => {
     await callApi(srv, 'POST', '/api/chat', { sessionId: 'demo', message: 'hello' })
     await callApi(srv, 'POST', '/api/chat', { sessionId: 'demo', message: 'hello again' })
     const msgs = await callApi(srv, 'GET', '/api/admin/messages?sessionId=demo')
-    expect(msgs.map((m: any) => m.text)).toEqual(['hello', 'Echo: hello', 'hello again', 'Echo: hello again'])
+    expect(msgs.map((m: any) => m.text)).toEqual([
+      'hello',
+      'Echo: hello [history:1]',
+      'hello again',
+      'Echo: hello again [history:3]',
+    ])
     const sessions = await callApi(srv, 'GET', '/api/admin/sessions')
     expect(sessions.find((s: any) => s.sessionId === 'demo')?.count).toBe(4)
   })

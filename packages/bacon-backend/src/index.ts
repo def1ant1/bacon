@@ -3,10 +3,19 @@ import path from 'path'
 import fs from 'fs'
 import { WebSocketServer } from 'ws'
 import Busboy from 'busboy'
-import { EchoAiProvider, Pipeline } from './pipeline'
+import { Pipeline } from './pipeline'
 import { BaconServer, BaconServerConfig, ChatMessage, Logger } from './types'
 import { MemoryStorage } from './storage-memory'
 import { PostgresStorage } from './storage-postgres'
+import { ProviderRegistry } from './ai/providers/registry'
+import { FetchHttpClient } from './ai/providers/http'
+import { EchoProvider } from './ai/providers/echo'
+import { buildOpenAiFromEnv } from './ai/providers/openai'
+import { buildGrokFromEnv } from './ai/providers/grok'
+import { buildGeminiFromEnv } from './ai/providers/gemini'
+import { buildLlamaFromEnv } from './ai/providers/llama'
+import { ProviderRouter } from './ai/provider-router'
+import { ProviderName } from './ai/providers/types'
 
 const defaultSettings = {
   general: {
@@ -35,6 +44,28 @@ function getLogger(logger?: Logger): Logger {
   return { ...base, ...(logger || {}) }
 }
 
+function buildProviderRegistry(logger: Logger) {
+  const registry = new ProviderRegistry()
+  registry.register(new EchoProvider())
+  const http = new FetchHttpClient()
+
+  const tryRegister = (name: string, fn: () => void) => {
+    try {
+      fn()
+      logger.info(`[ai] registered provider ${name}`)
+    } catch (err) {
+      logger.debug?.(`[ai] skipped provider ${name}`, err)
+    }
+  }
+
+  tryRegister('openai', () => registry.register(buildOpenAiFromEnv(http)))
+  tryRegister('grok', () => registry.register(buildGrokFromEnv(http)))
+  tryRegister('gemini', () => registry.register(buildGeminiFromEnv(http)))
+  tryRegister('llama', () => registry.register(buildLlamaFromEnv(http)))
+  registry.setFallbackOrder(['openai', 'grok', 'gemini', 'llama', 'echo'])
+  return registry
+}
+
 function validateSettings(settings: any) {
   const merged = { ...defaultSettings, ...(settings || {}) }
   merged.behavior.maxHistory = clampInt(merged.behavior.maxHistory, 10, 1000, 200)
@@ -46,6 +77,8 @@ function validateSettings(settings: any) {
   merged.plugins.logging = !!merged.plugins.logging
   merged.plugins.tracing = !!merged.plugins.tracing
   merged.plugins.authTokenRefresher = !!merged.plugins.authTokenRefresher
+  const allowedProviders: ProviderName[] = ['echo', 'openai', 'grok', 'gemini', 'llama']
+  merged.ai.provider = allowedProviders.includes(merged.ai.provider as ProviderName) ? merged.ai.provider : 'echo'
   return merged
 }
 
@@ -58,9 +91,16 @@ function clampInt(value: any, min: number, max: number, fallback: number) {
 export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   const logger = getLogger(config.logger)
   const persisted = config.settingsStore?.load?.()
-  const settings = validateSettings(persisted || config.settings)
+  const baseSettings = persisted && typeof (persisted as any).then !== 'function' ? persisted : config.settings
+  const settings = validateSettings(baseSettings)
+  if (persisted && typeof (persisted as any).then === 'function') {
+    ;(persisted as Promise<any>)
+      .then((snapshot) => Object.assign(settings, validateSettings({ ...settings, ...(snapshot || {}) })))
+      .catch((err) => logger.warn('[settings] async load failed', err))
+  }
   const storage = config.storage || new MemoryStorage()
-  const ai = config.ai || new EchoAiProvider()
+  const registry = config.providerRegistry || buildProviderRegistry(logger)
+  const ai = config.ai || new ProviderRouter(registry, settings.ai.provider as ProviderName)
   const pipeline = new Pipeline(storage, ai, { ...config, settings })
   const uploadsDir = config.fileHandling?.uploadsDir || path.join(process.cwd(), 'uploads')
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
@@ -183,6 +223,19 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       return sendJson(res, msgs)
     }
 
+    if (url.pathname === '/api/admin/ai/providers' && req.method === 'GET') {
+      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      return sendJson(res, registry.listMetadata())
+    }
+
+    if (url.pathname === '/api/admin/ai/providers/health' && req.method === 'GET') {
+      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      const health = await registry.health({ logger, metrics: config.metrics })
+      const ok = health.every((h) => h.ok)
+      config.metrics?.onHealthcheck?.(ok ? 'ok' : 'fail', { component: 'ai', health })
+      return sendJson(res, { ok, health })
+    }
+
     if (url.pathname === '/api/admin/clear' && req.method === 'POST') {
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(chunk as Buffer)
@@ -278,4 +331,7 @@ function attachWs(http: any, pipeline: Pipeline, logger: Logger, enabled: () => 
 }
 
 export { MemoryStorage, PostgresStorage }
+export { PostgresSettingsStore } from './settings-postgres'
+export { ProviderRegistry } from './ai/providers/registry'
+export { ProviderRouter } from './ai/provider-router'
 export type { BaconServerConfig, BaconServer, ChatMessage } from './types'

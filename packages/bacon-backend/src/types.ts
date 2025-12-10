@@ -59,8 +59,10 @@ export interface AdminSettings {
     allowedOrigins: string[]
   }
   ai: {
-    provider: 'echo'
+    provider: 'echo' | 'openai' | 'grok' | 'gemini' | 'llama'
     systemPrompt: string
+    model?: string
+    embeddingModel?: string
   }
 }
 
@@ -77,7 +79,18 @@ export interface StorageAdapter {
 }
 
 export interface AiProvider {
-  complete(prompt: string, history: { role: 'user' | 'assistant' | 'system'; content: string }[]): Promise<string>
+  chat(
+    request: {
+      prompt: string
+      history?: { role: 'user' | 'assistant' | 'system'; content: string }[]
+      model?: string
+      provider?: string
+      requestId?: string
+    },
+  ): Promise<{ text: string; requestId?: string }>
+  embed?(request: { text: string; model?: string }): Promise<{ vector: number[] }>
+  metadata?(): { name: string; models?: string[] }
+  checkHealth?(): Promise<{ ok: boolean; name: string }>
 }
 
 export interface MetricsHooks {
@@ -122,6 +135,7 @@ export interface BaconServerConfig {
   auth?: {
     bearerToken?: string
   }
+  providerRegistry?: any
 }
 
 export interface MessagePipeline {
