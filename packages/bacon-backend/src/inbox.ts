@@ -487,6 +487,13 @@ export class InboxService {
     return updated
   }
 
+  async unassign(ticketId: string) {
+    const updated = await this.deps.queue.update(ticketId, { assignedAgentId: null, status: 'new' })
+    if (!updated) throw new Error('ticket_not_found')
+    this.deps.notifier?.broadcast(null, { type: 'ticket.unassigned', ticket: updated })
+    return updated
+  }
+
   async addTags(ticketId: string, tags: string[]) {
     const unique = Array.from(new Set(tags))
     const updated = await this.deps.queue.update(ticketId, { tags: unique })
