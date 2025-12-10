@@ -43,7 +43,8 @@ export class MemoryInboxQueue implements InboxQueueAdapter {
     const next: InboxTicket = {
       ...existing,
       ...patch,
-      status: ensureStatus((patch as any)?.status) || existing.status,
+      // Preserve the current status when callers intentionally omit it (e.g. tag edits or repeat user messages)
+      status: patch.status !== undefined ? ensureStatus((patch as any)?.status) : existing.status,
       tags: patch.tags ?? existing.tags,
       updatedAt: nowIso(),
     }
@@ -171,7 +172,8 @@ export class PostgresInboxQueue implements InboxQueueAdapter {
     const next = {
       ...existing,
       ...patch,
-      status: ensureStatus((patch as any)?.status) || existing.status,
+      // Respect the existing status unless an explicit, valid update is provided
+      status: patch.status !== undefined ? ensureStatus((patch as any)?.status) : existing.status,
       tags: patch.tags ?? existing.tags,
       updatedAt: nowIso(),
     }
@@ -327,7 +329,8 @@ export class RedisInboxQueue implements InboxQueueAdapter {
     const next: InboxTicket = {
       ...existing,
       ...patch,
-      status: ensureStatus((patch as any)?.status) || existing.status,
+      // Preserve the prior status for partial updates that do not include a status change
+      status: patch.status !== undefined ? ensureStatus((patch as any)?.status) : existing.status,
       tags: patch.tags ?? existing.tags,
       updatedAt: nowIso(),
     }
