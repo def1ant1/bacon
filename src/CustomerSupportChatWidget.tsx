@@ -85,6 +85,13 @@ export interface CustomerSupportChatWidgetProps {
   defaultOpen?: boolean;
 
   /**
+   * Optional welcome/intro message that appears when a session is first created
+   * and no other history exists. Useful for surfacing admin-configured greetings
+   * so users always see the expected onboarding copy.
+   */
+  welcomeMessage?: string;
+
+  /**
    * Optional polling interval (ms) to sync messages from the server.
    * Defaults to 3000ms. Set to 0 to disable.
    */
@@ -137,6 +144,7 @@ export const CustomerSupportChatWidget: React.FC<
   defaultOpen = false,
   uploadUrl,
   pollIntervalMs = 3000,
+  welcomeMessage,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -154,6 +162,18 @@ export const CustomerSupportChatWidget: React.FC<
     const id = getOrCreateSessionId();
     setSessionId(id);
   }, []);
+
+  /**
+   * Add a one-time welcome message when the session is initialized and no
+   * history exists. This stays purely client-side so it never competes with
+   * server-sent messages and mirrors the admin-configured greeting.
+   */
+  useEffect(() => {
+    if (!welcomeMessage) return;
+    if (!sessionId) return;
+    if (messages.length > 0) return;
+    addMessage("bot", welcomeMessage);
+  }, [welcomeMessage, sessionId, messages.length]);
 
   /**
    * Automatically scroll to the bottom when messages change.

@@ -52,6 +52,7 @@ export default function App() {
   const title = settings?.general?.title ?? 'Support'
   const defaultOpen = !!(settings?.general?.defaultOpen ?? true)
   const primaryColor = settings?.branding?.primaryColor ?? '#2563eb'
+  const welcomeMessage = settings?.general?.welcomeMessage ?? 'Hi! How can we help today?'
 
   return (
     <div style={{ fontFamily: 'ui-sans-serif, system-ui, Arial', padding: 24 }}>
@@ -71,6 +72,7 @@ export default function App() {
         title={title}
         defaultOpen={defaultOpen}
         primaryColor={primaryColor}
+        welcomeMessage={welcomeMessage}
         userIdentifier={{ email: 'demo@example.com' }}
       />
     </div>

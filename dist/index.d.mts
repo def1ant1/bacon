@@ -66,6 +66,12 @@ interface CustomerSupportChatWidgetProps {
      */
     defaultOpen?: boolean;
     /**
+     * Optional welcome/intro message that appears when a session is first created
+     * and no other history exists. Useful for surfacing admin-configured greetings
+     * so users always see the expected onboarding copy.
+     */
+    welcomeMessage?: string;
+    /**
      * Optional polling interval (ms) to sync messages from the server.
      * Defaults to 3000ms. Set to 0 to disable.
      */
