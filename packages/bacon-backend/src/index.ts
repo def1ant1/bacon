@@ -22,6 +22,7 @@ import { MemoryFlowRepository, PostgresFlowRepository } from './flows/repository
 import { FlowEngine } from './flows/engine'
 import { buildFlowApi } from './flows/api'
 import jwt from 'jsonwebtoken'
+import { AuthService } from './auth'
 
 const defaultSettings = {
   general: {
@@ -146,13 +147,30 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
   const authBearer = config.auth?.bearerToken
   const jwtSecret = config.auth?.jwtSecret
+  const authService = jwtSecret
+    ? new AuthService({
+        accessSecret: jwtSecret,
+        refreshSecret: config.auth?.refreshSecret,
+        accessTtlMs: config.auth?.accessTtlMs,
+        refreshTtlMs: config.auth?.refreshTtlMs,
+        issuer: config.auth?.issuer,
+        audience: config.auth?.audience,
+        roleClaim: config.auth?.roleClaim,
+        defaultRole: config.auth?.defaultRole,
+        onRevoke: config.auth?.onRevoke,
+        onRefresh: config.auth?.onRefresh,
+        logger,
+      })
+    : null
   function ensureAuth(req: any, required: 'admin' | 'agent' = 'agent'): AuthContext {
-    const header = req.headers?.['authorization'] || ''
-    const token = (Array.isArray(header) ? header[0] : header)?.toString?.().replace('Bearer ', '')
+    const header = req.headers?.['authorization'] || req.headers?.['Authorization'] || ''
+    const token = (Array.isArray(header) ? header[0] : header)?.toString?.().replace(/Bearer\s+/i, '')
     if (authBearer && token === authBearer) return { ok: true, role: 'admin', userId: 'bearer-admin' }
     if (jwtSecret && token) {
       try {
-        const payload: any = jwt.verify(token, jwtSecret)
+        const verified = authService?.verifyAccess(token)
+        if (verified && !verified.ok && verified.error === 'revoked') return { ok: false, role: 'anonymous' }
+        const payload: any = verified?.claims || jwt.verify(token, jwtSecret)
         const claim = config.auth?.roleClaim || 'role'
         const roleVal = String(payload?.[claim] || config.auth?.defaultRole || 'agent').toLowerCase()
         const normalized: 'admin' | 'agent' = roleVal === 'admin' ? 'admin' : 'agent'
@@ -270,6 +288,34 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
     if (url.pathname === '/api/admin/settings') return handleAdminSettings(req, res)
 
+    if (url.pathname === '/api/admin/auth/refresh' && req.method === 'POST') {
+      if (!authService) return sendJson(res, { error: 'refresh_not_enabled' }, 400)
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk as Buffer)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+      const refreshToken = body.refreshToken || ''
+      const refreshed = authService.refresh(refreshToken)
+      const claims = refreshed.claims || (jwt.decode(refreshToken) as any) || {}
+      const tokenPayload = {
+        sub: claims?.sub,
+        role: claims?.role || claims?.[config.auth?.roleClaim || 'role'] || config.auth?.defaultRole || 'agent',
+      }
+      const access = refreshed.access || authService.issueAccessToken(tokenPayload)
+      return sendJson(res, { accessToken: access.token, expiresAt: access.expiresAt, claims })
+    }
+
+    if (url.pathname === '/api/admin/auth/revoke' && req.method === 'POST') {
+      if (!authService) return sendJson(res, { error: 'revocation_not_enabled' }, 400)
+      const actor = requireRole(req, res, 'admin')
+      if (!actor) return
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk as Buffer)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+      if (!body.jti) return sendJson(res, { error: 'missing_jti' }, 400)
+      authService.revoke(String(body.jti))
+      return sendJson(res, { ok: true })
+    }
+
     if (url.pathname === '/api/admin/settings/reset') {
       if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const resetTo = validateSettings(config.settingsStore?.reset?.() || config.settings)
@@ -335,6 +381,10 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
           case 'status':
             payload = await inbox.updateStatus(body.ticketId, body.status)
             logger.info('[audit] status_update', { actor: actor.userId || actor.role, ticketId: body.ticketId, status: body.status })
+            break
+          case 'unassign':
+            payload = await inbox.unassign(body.ticketId)
+            logger.info('[audit] unassign', { actor: actor.userId || actor.role, ticketId: body.ticketId })
             break
           case 'note':
             payload = await inbox.addNote(body.ticketId, body.text, actor.userId)

@@ -202,8 +202,15 @@ export interface BaconServerConfig {
   auth?: {
     bearerToken?: string
     jwtSecret?: string
+    refreshSecret?: string
+    accessTtlMs?: number
+    refreshTtlMs?: number
     roleClaim?: string
     defaultRole?: 'admin' | 'agent'
+    issuer?: string
+    audience?: string
+    onRevoke?: (jti: string) => void
+    onRefresh?: (meta: { jti: string; sub?: string; role: string }) => void
   }
   providerRegistry?: any
   inbox?: {

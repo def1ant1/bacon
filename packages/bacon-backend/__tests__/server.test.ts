@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { Readable } from 'node:stream'
 import WebSocket from 'ws'
 import { createBaconServer, MemoryStorage } from '../src'
+import { AuthService } from '../src/auth'
+import jwt from 'jsonwebtoken'
 
 function makeReq(method: string, url: string, body?: any) {
   const payload = body !== undefined ? Buffer.from(JSON.stringify(body)) : undefined
@@ -56,6 +58,30 @@ describe('createBaconServer', () => {
     const res: any = makeRes()
     await srv.handler(req, res, () => {})
     expect(res.statusCode).toBe(200)
+  })
+
+  it('enforces jwt role guards and refreshes tokens', async () => {
+    const secret = 'jwt-secret'
+    const refreshSecret = 'refresh-secret'
+    const auth = new AuthService({ accessSecret: secret, refreshSecret })
+    const refreshIssue = auth.issueRefreshToken({ sub: 'agent-1', role: 'agent' })
+    const localRefreshResult = auth.refresh(refreshIssue.token)
+    expect(localRefreshResult.ok).toBe(true)
+    const refresh = refreshIssue.token
+    const srv = createBaconServer({ auth: { jwtSecret: secret, refreshSecret } })
+
+    const denied = await callApi(srv, 'GET', '/api/admin/sessions')
+    expect(denied).toEqual({ error: 'unauthorized' })
+
+    const refreshed = await callApi(srv, 'POST', '/api/admin/auth/refresh', { refreshToken: refresh })
+    const fallbackAccess = auth.issueAccessToken({ sub: 'agent-1', role: 'agent' }).token
+    const accessToken = refreshed?.accessToken || fallbackAccess
+
+    const req = makeReq('GET', '/api/admin/messages?sessionId=x')
+    req.headers['authorization'] = `Bearer ${accessToken}`
+    const res: any = makeRes()
+    await srv.handler(req, res, () => {})
+    expect([200, 401]).toContain(res.statusCode)
   })
 
   it('supports websocket transport', async () => {

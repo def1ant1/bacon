@@ -96,6 +96,12 @@ Production hardening tips baked into the transports:
 - **Immutability:** payloads and messages are deep-cloned between plugins. To modify data, return a new payload/message list instead of mutating arguments.
 - **Safety:** send hooks can short-circuit (cached response), retry on recoverable errors, or abort a send entirely. Retries are capped to prevent infinite loops.
 
+## Backend admin/API security
+
+- Set `AUTH_BEARER_TOKEN` or `AUTH_JWT_SECRET` + `AUTH_REFRESH_SECRET` in the backend environment to secure `/api/admin/*` routes.
+- Access tokens honor the JWT `role` (or configured `roleClaim`) to enforce **admin** vs **agent** permissions and can be refreshed via `POST /api/admin/auth/refresh`.
+- Refresh and access tokens support optional issuer/audience claims; operators can register `onRefresh`/`onRevoke` callbacks to plug into centralized audit pipelines.
+
 Core hooks:
 
 - `onBeforeSend(payload)` → optionally return `{ payload, response?, abort? }`.
