@@ -105,6 +105,27 @@ describe('Inbox workflows', () => {
     expect(note.text).toBe('investigating')
   })
 
+  it('preserves status when partial updates omit it', async () => {
+    const storage = new MemoryStorage()
+    const queue = new MemoryInboxQueue()
+
+    const ticket = await queue.enqueue({ sessionId: 'repeat-session', brandId: 'acme' })
+    const assigned = await queue.update(ticket.id, { status: 'assigned', assignedAgentId: 'agent-42' })
+    expect(assigned?.status).toBe('assigned')
+
+    // Tag-only updates should not reset the ticket to "new"
+    const retagged = await queue.update(ticket.id, { tags: ['vip'] })
+    expect(retagged?.status).toBe('assigned')
+
+    // A repeat user message flows through enqueue() without clobbering status
+    const snoozed = await queue.update(ticket.id, { status: 'snoozed' })
+    expect(snoozed?.status).toBe('snoozed')
+
+    const refreshed = await queue.enqueue({ sessionId: ticket.sessionId, brandId: 'acme', lastMessage: 'still waiting' })
+    expect(refreshed.status).toBe('snoozed')
+    expect(refreshed.lastMessage).toBe('still waiting')
+  })
+
   it('emits websocket updates for agents', async () => {
     const notifier = new AgentChannelNotifier()
     const received: any[] = []
