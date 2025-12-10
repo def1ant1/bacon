@@ -129,6 +129,16 @@ const defaultExecutors: Record<string, NodeExecutor> = {
   escalate_to_agent: () => ({ status: 'ok', data: { escalated: true } }),
   crm_lookup: () => ({ status: 'ok', data: { crm: { id: 'stubbed-crm' } } }),
   shopify_order_lookup: () => ({ status: 'ok', data: { shopify: { status: 'stubbed' } } }),
+  plugin_action: async (node, ctx) => {
+    const { pluginId, actionName, payload } = node.config || {}
+    if (!pluginId || !actionName)
+      return { status: 'error', error: new Error('pluginId and actionName are required') }
+    if (!ctx.plugins?.invokeAction)
+      return { status: 'error', error: new Error('plugin runtime unavailable') }
+    const result = await ctx.plugins.invokeAction(pluginId, actionName, payload || {})
+    if (!result?.ok) return { status: 'error', error: new Error('plugin action failed'), data: result }
+    return { status: 'ok', data: result.data }
+  },
 }
 
 function findStartNode(flow: FlowDefinition): FlowNode | null {
