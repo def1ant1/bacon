@@ -83,6 +83,49 @@ try {
   ;({ Pool } = await import('pg'))
 } catch {}
 
+/**
+ * Hard limit utility for in-memory history. Centralized to ensure every code
+ * path (chat, admin send, uploads) respects the configured retention ceiling
+ * and keeps admin counts aligned with what is actually persisted.
+ */
+export function trimMemoryHistory(
+  memStore: Map<string, Msg[]>,
+  sessionId: string,
+  maxHistory: number,
+) {
+  const limit = Number(maxHistory)
+  if (!Number.isFinite(limit) || limit <= 0) return
+  const arr = memStore.get(sessionId)
+  if (!arr) return
+  if (arr.length > limit) arr.splice(0, arr.length - limit)
+}
+
+/**
+ * Shared helper to enforce maxHistory in Postgres. The helper accepts any
+ * query-capable object (pool or pooled client) to support real DB usage and
+ * fast unit tests with fakes.
+ */
+export async function trimDbHistory(
+  queryable: { query: (sql: string, params?: any[]) => Promise<any> },
+  sessionId: string,
+  maxHistory: number,
+) {
+  const limit = Number(maxHistory)
+  if (!Number.isFinite(limit) || limit <= 0) return
+  await queryable.query(
+    `with ordered as (
+       select id, row_number() over (order by created_at asc, id asc) as rn
+         from chat_messages
+        where session_id = $1
+     )
+     delete from chat_messages m
+      using ordered o
+      where m.id = o.id
+        and o.rn > $2`,
+    [sessionId, limit],
+  )
+}
+
 try {
   // Load .env if available
   const __filename_env = fileURLToPath(import.meta.url)
@@ -203,6 +246,7 @@ export default defineConfig({
         }
 
         let settings = readSettings()
+        const getMaxHistory = () => Number(settings.behavior?.maxHistory ?? 200)
 
         // --- Storage backends ---
         const USE_DB = !!(process.env.DATABASE_URL && Pool)
@@ -280,24 +324,33 @@ export default defineConfig({
           return { id }
         }
 
-        async function dbInsertMessage(sessionId: string, sender: 'user'|'bot', text: string) {
+        async function dbInsertMessage(
+          sessionId: string,
+          sender: 'user' | 'bot',
+          text: string,
+          maxHistory?: number,
+        ) {
           await ensureSchema()
-          await pool.query('begin')
+          const client = await pool.connect()
           try {
+            await client.query('begin')
             const conv = await dbEnsureConversation(sessionId)
-            await pool.query(
+            await client.query(
               `insert into chat_messages(session_id, sender, text) values ($1,$2,$3)`,
               [sessionId, sender, text]
             )
-            await pool.query(
+            await client.query(
               `update chat_sessions set last_activity_at = now() where session_id = $1`,
               [sessionId]
             )
-            await pool.query(`update conversations set last_activity_at = now() where id = $1`, [conv.id])
-            await pool.query('commit')
+            await client.query(`update conversations set last_activity_at = now() where id = $1`, [conv.id])
+            await trimDbHistory(client, sessionId, Number(maxHistory ?? settings.behavior?.maxHistory ?? 200))
+            await client.query('commit')
           } catch (e) {
-            await pool.query('rollback')
+            await client.query('rollback')
             throw e
+          } finally {
+            client.release()
           }
         }
 
@@ -351,7 +404,7 @@ export default defineConfig({
             [sessionId, info.originalName, info.mimeType || null, info.sizeBytes || null, info.storagePath]
           )
           // Also add a message indicating an upload occurred
-          await dbInsertMessage(sessionId, 'user', `Uploaded file: ${info.originalName}`)
+          await dbInsertMessage(sessionId, 'user', `Uploaded file: ${info.originalName}`, getMaxHistory())
         }
 
         async function dbListFiles(sessionId: string) {
@@ -482,7 +535,7 @@ export default defineConfig({
           return j
         }
 
-        const { runSweep: runRetentionSweep } = createRetentionJob({
+        const { runSweep: runRetentionSweep, timer } = createRetentionJob({
           memStore,
           memFiles,
           pool,
@@ -494,6 +547,7 @@ export default defineConfig({
         // the runner for tests/smoke checks.
         runRetentionSweep().catch((e) => console.error('[retention] initial sweep failed', e))
         ;(server as any).__runRetentionSweep = runRetentionSweep
+        ;(server as any).__retentionTimer = timer
         // Vite will dispose plugins on restart; no need to clearInterval explicitly
 
         server.middlewares.use(async (req, res, next) => {
@@ -507,15 +561,17 @@ export default defineConfig({
               const body = bodyStr ? JSON.parse(bodyStr) : {}
               const sessionId: string = body?.sessionId || 'session-dev'
               const userMsg: string = String(body?.message ?? '')
+              const maxHistory = getMaxHistory()
 
               const now = () => new Date().toISOString()
 
               // Persist user message
               if (userMsg.trim()) {
-                if (USE_DB) await dbInsertMessage(sessionId, 'user', userMsg)
+                if (USE_DB) await dbInsertMessage(sessionId, 'user', userMsg, maxHistory)
                 else {
                   const arr = memStore.get(sessionId) || []
                   arr.push({ id: `user_${Date.now()}_${Math.random().toString(16).slice(2)}`, sender: 'user', text: userMsg, createdAt: now() })
+                  trimMemoryHistory(memStore, sessionId, maxHistory)
                   memStore.set(sessionId, arr)
                 }
               }
@@ -552,12 +608,11 @@ export default defineConfig({
               const delayMs = Number(settings.behavior?.replyDelayMs ?? 0)
 
               const finalize = async () => {
-                if (USE_DB) await dbInsertMessage(sessionId, 'bot', replyText)
+                if (USE_DB) await dbInsertMessage(sessionId, 'bot', replyText, maxHistory)
                 else {
                   const arr = memStore.get(sessionId) || []
                   arr.push({ id: `bot_${Date.now()}_${Math.random().toString(16).slice(2)}`, sender: 'bot', text: replyText, createdAt: now() })
-                  const maxHistory = Number(settings.behavior?.maxHistory ?? 200)
-                  if (arr.length > maxHistory) arr.splice(0, arr.length - maxHistory)
+                  trimMemoryHistory(memStore, sessionId, maxHistory)
                   memStore.set(sessionId, arr)
                 }
                 sendJson(res, { reply: replyText })
@@ -614,11 +669,13 @@ export default defineConfig({
               const sessionId = String(body?.sessionId || '')
               const text = String(body?.text || '')
               if (!sessionId || !text.trim()) return sendJson(res, { error: 'Missing sessionId or text' }, 400)
-              if (USE_DB) await dbInsertMessage(sessionId, 'bot', text)
+              const maxHistory = getMaxHistory()
+              if (USE_DB) await dbInsertMessage(sessionId, 'bot', text, maxHistory)
               else {
                 const now = () => new Date().toISOString()
                 const arr = memStore.get(sessionId) || []
                 arr.push({ id: `bot_${Date.now()}_${Math.random().toString(16).slice(2)}`, sender: 'bot', text, createdAt: now() })
+                trimMemoryHistory(memStore, sessionId, maxHistory)
                 memStore.set(sessionId, arr)
               }
               return sendJson(res, { ok: true })
@@ -650,6 +707,7 @@ export default defineConfig({
                 file.pipe(out)
                 out.on('close', async () => {
                   const relPath = '/uploads/' + path.basename(filePath)
+                  const maxHistory = getMaxHistory()
                   if (USE_DB) {
                     await dbInsertFile(sessionId, { originalName: filename, mimeType, sizeBytes: total, storagePath: relPath })
                   } else {
@@ -657,6 +715,7 @@ export default defineConfig({
                     const now = () => new Date().toISOString()
                     const m = memStore.get(sessionId) || []
                     m.push({ id: `user_${Date.now()}_${Math.random().toString(16).slice(2)}`, sender: 'user', text: `Uploaded file: ${filename}`, createdAt: now() })
+                    trimMemoryHistory(memStore, sessionId, maxHistory)
                     memStore.set(sessionId, m)
 
                     const files = memFiles.get(sessionId) || []
