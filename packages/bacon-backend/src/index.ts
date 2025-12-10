@@ -24,6 +24,7 @@ import { buildFlowApi } from './flows/api'
 import jwt from 'jsonwebtoken'
 import { AuthService } from './auth'
 import { ChannelRouter, buildWebWidgetAdapter } from './channels'
+import { AutomationActionExecutor, AutomationRuleEngine } from './automation-rules'
 
 const defaultSettings = {
   general: {
@@ -143,6 +144,32 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     defaultBrandId: config.brandId || 'default',
   })
   const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb, inbox)
+
+  let automation = config.automation?.engine
+  if (!automation && config.automation?.rules?.length) {
+    const executor: AutomationActionExecutor = {
+      async sendMessage(sessionId, action) {
+        return pipeline.pushBotMessage(sessionId, action.text, { type: action.payload ? 'card' : 'text', payload: action.payload })
+      },
+      async invokeFlow(sessionId, action) {
+        const repo = config.flows?.repository || flowRepository
+        const engine = config.flows?.engine || new FlowEngine({ logger })
+        const flow = await repo.get(action.flowId)
+        if (!flow) return
+        await engine.run(flow, { sessionId, vars: { automation: true, input: action.input || {} } })
+      },
+      async escalate(sessionId, action, ctx) {
+        await inbox.upsertFromUserMessage({
+          sessionId,
+          text: action.reason || ctx?.text || 'Automation escalation',
+          tags: action.tags,
+          brandId: config.brandId,
+        })
+      },
+    }
+    automation = new AutomationRuleEngine({ ...config.automation, executor })
+  }
+  pipeline.attachAutomation(automation)
   const channelRouter = config.channels?.router || new ChannelRouter({ storage, pipeline, logger })
   channelRouter.register(buildWebWidgetAdapter())
   config.channels?.adapters?.forEach((adapter) => channelRouter.register(adapter))

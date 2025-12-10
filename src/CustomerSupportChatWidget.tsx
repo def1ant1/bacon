@@ -18,6 +18,12 @@ import {
 import { WebSocketTransport, WebSocketTransportOptions } from "./transports/WebSocketTransport";
 import { BaconPlugin, PluginRunner } from "./plugins/BaconPlugin";
 import { PluginProvider } from "./plugins/PluginProvider";
+import {
+  MessageComponentRegistry,
+  defaultMessageRegistry,
+  RichMessagePayload,
+  RichMessageType,
+} from "./messages/registry";
 
 /**
  * Represents who sent a given chat message.
@@ -35,6 +41,8 @@ export interface ChatMessage {
   fileUrl?: string;
   fileName?: string;
   metadata?: Record<string, unknown>;
+  type?: RichMessageType;
+  payload?: RichMessagePayload;
 }
 
 /**
@@ -132,6 +140,11 @@ export interface CustomerSupportChatWidgetProps {
    * place.
    */
   plugins?: BaconPlugin[];
+
+  /**
+   * Optional registry to control how rich message types render inside the widget.
+   */
+  messageRegistry?: MessageComponentRegistry;
 }
 
 /**
@@ -184,6 +197,7 @@ export const CustomerSupportChatWidget: React.FC<
   transport = "polling",
   transportOptions,
   plugins = [],
+  messageRegistry,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -196,6 +210,10 @@ export const CustomerSupportChatWidget: React.FC<
   const transportOverrides = useMemo(
     () => transportOptions || {},
     [transportOptions],
+  );
+  const registry = useMemo(
+    () => messageRegistry || defaultMessageRegistry,
+    [messageRegistry],
   );
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -353,14 +371,52 @@ export const CustomerSupportChatWidget: React.FC<
   /**
    * Adds a message to local state.
    */
-  const addMessage = (sender: SenderType, text: string) => {
+  const addMessage = (sender: SenderType, text: string, extra?: Partial<ChatMessage>) => {
     const newMessage: ChatMessage = {
       id: `${sender}_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       sender,
       text,
       createdAt: new Date().toISOString(),
+      ...extra,
     };
     setMessages((prev) => [...prev, newMessage]);
+  };
+
+  const sendText = async (raw: string) => {
+    if (!raw.trim() || !sessionId || isLoading) return;
+
+    const trimmed = raw.trim();
+
+    // Optimistically add the user message.
+    addMessage("user", trimmed, { type: "text" });
+    setInputText("");
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const payload: ChatApiRequest = {
+        sessionId,
+        message: trimmed,
+        userIdentifier,
+      };
+
+      const data = await pluginRunner.send(payload, dispatchPayload);
+
+      if (data?.reply) {
+        addMessage("bot", data.reply || "I’m sorry, I didn’t receive a response.", { type: "text" });
+      }
+    } catch (err) {
+      console.error("Chat send error:", err);
+      setError(
+        "I ran into a problem reaching our servers. Please try again in a moment.",
+      );
+      addMessage(
+        "bot",
+        "I’m having trouble reaching the support system right now. Please try again shortly or contact us via another channel.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const dispatchPayload = async (payload: ChatApiRequest): Promise<ChatApiResponse | void> => {
@@ -388,41 +444,8 @@ export const CustomerSupportChatWidget: React.FC<
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!inputText.trim() || !sessionId || isLoading) return;
-
-    const trimmed = inputText.trim();
-
-    // Optimistically add the user message.
-    addMessage("user", trimmed);
-    setInputText("");
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const payload: ChatApiRequest = {
-        sessionId,
-        message: trimmed,
-        userIdentifier,
-      };
-
-      const data = await pluginRunner.send(payload, dispatchPayload);
-
-      if (data?.reply) {
-        // Add the bot's reply message when the transport returns it (polling).
-        addMessage("bot", data.reply || "I’m sorry, I didn’t receive a response.");
-      }
-    } catch (err) {
-      console.error("Chat send error:", err);
-      setError(
-        "I ran into a problem reaching our servers. Please try again in a moment.",
-      );
-      // Optionally add a bot message for user feedback.
-      addMessage(
-        "bot",
-        "I’m having trouble reaching the support system right now. Please try again shortly or contact us via another channel.",
-      );
-    } finally {
-      setIsLoading(false);
-    }
+    const pending = inputText;
+    await sendText(pending);
   };
 
   const handleFileSelected = async (file: File | null) => {
@@ -486,6 +509,10 @@ export const CustomerSupportChatWidget: React.FC<
     }
   };
 
+  const handleQuickReply = async (value: string) => {
+    await sendText(value);
+  };
+
   /**
    * Basic header subtitle showing user identifier if available.
    */
@@ -546,13 +573,7 @@ export const CustomerSupportChatWidget: React.FC<
                     className={`cs-chat-message cs-chat-message--${msg.sender}`}
                   >
                     <div className="cs-chat-message-bubble">
-                      {msg.fileUrl ? (
-                        <a href={msg.fileUrl} target="_blank" rel="noreferrer">
-                          {msg.text || msg.fileName}
-                        </a>
-                      ) : (
-                        msg.text
-                      )}
+                      {registry.render(msg, { onQuickReply: handleQuickReply })}
                     </div>
                   </div>
                 ))}

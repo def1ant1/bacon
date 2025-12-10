@@ -1,4 +1,5 @@
 import { AiProvider, BaconServerConfig, ChatMessage, MessagePipeline, StorageAdapter } from './types'
+import { AutomationRuleEngine } from './automation-rules'
 import { KnowledgeBaseService } from './kb/service'
 import { InboxService } from './inbox'
 
@@ -9,7 +10,12 @@ export class Pipeline implements MessagePipeline {
     private config: BaconServerConfig,
     private kb?: KnowledgeBaseService,
     private inbox?: InboxService,
+    private automation?: AutomationRuleEngine,
   ) {}
+
+  attachAutomation(engine?: AutomationRuleEngine) {
+    this.automation = engine
+  }
 
   private maxHistory() {
     return Number(this.config.behavior?.maxHistory ?? this.config.settings?.behavior?.maxHistory ?? 200)
@@ -17,6 +23,7 @@ export class Pipeline implements MessagePipeline {
 
   async handleUserMessage(sessionId: string, text: string): Promise<ChatMessage> {
     await this.storage.recordMessage(sessionId, 'user', text, this.maxHistory())
+    await this.automation?.handleMessageReceived({ sessionId, text, source: 'message' })
     const history = await this.storage.listMessages(sessionId)
     let assistantReply = 'temporarily unavailable'
     let confidence = 1
@@ -75,8 +82,12 @@ export class Pipeline implements MessagePipeline {
     return bot
   }
 
-  async pushBotMessage(sessionId: string, text: string): Promise<ChatMessage> {
-    return this.storage.recordMessage(sessionId, 'bot', text, this.maxHistory())
+  async pushBotMessage(
+    sessionId: string,
+    text: string,
+    options?: { type?: import('./types').RichMessageType; payload?: import('./types').RichMessagePayload },
+  ): Promise<ChatMessage> {
+    return this.storage.recordMessage(sessionId, 'bot', text, this.maxHistory(), options)
   }
 
   async list(sessionId: string): Promise<ChatMessage[]> {

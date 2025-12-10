@@ -14,13 +14,21 @@ export class MemoryStorage implements StorageAdapter {
   private channelMappings = new Map<string, { mapping: ChannelMapping; createdAt: string; updatedAt: string }>()
   private channelReceipts = new Set<string>()
 
-  async recordMessage(sessionId: string, sender: Sender, text: string, maxHistory: number): Promise<ChatMessage> {
+  async recordMessage(
+    sessionId: string,
+    sender: Sender,
+    text: string,
+    maxHistory: number,
+    options?: { type?: import('./types').RichMessageType; payload?: import('./types').RichMessagePayload },
+  ): Promise<ChatMessage> {
     const msg: ChatMessage = {
       id: uuidv4(),
       sessionId,
       sender,
       text,
       createdAt: nowIso(),
+      type: options?.type,
+      payload: options?.payload,
     }
     const arr = this.messages.get(sessionId) || []
     arr.push(msg)
