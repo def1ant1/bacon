@@ -18,6 +18,8 @@
     "isolatedModules": true
   },
   "include": [
-    "src"
+    "src",
+    "packages",
+    "example"
   ]
 }

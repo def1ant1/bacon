@@ -1,0 +1,21 @@
+{
+  "name": "bacon-backend",
+  "version": "0.1.0",
+  "description": "Backend server factory and pipeline for Bacon chat widget",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "pg": "^8.13.1",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
