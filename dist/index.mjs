@@ -27,7 +27,8 @@ var CustomerSupportChatWidget = ({
   // Tailwind-ish blue-600
   defaultOpen = false,
   uploadUrl,
-  pollIntervalMs = 3e3
+  pollIntervalMs = 3e3,
+  welcomeMessage
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [sessionId, setSessionId] = useState(null);
@@ -41,6 +42,12 @@ var CustomerSupportChatWidget = ({
     const id = getOrCreateSessionId();
     setSessionId(id);
   }, []);
+  useEffect(() => {
+    if (!welcomeMessage) return;
+    if (!sessionId) return;
+    if (messages.length > 0) return;
+    addMessage("bot", welcomeMessage);
+  }, [welcomeMessage, sessionId, messages.length]);
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
