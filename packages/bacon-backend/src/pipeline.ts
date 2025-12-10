@@ -1,11 +1,4 @@
-import { v4 as uuidv4 } from 'uuid'
 import { AiProvider, BaconServerConfig, ChatMessage, MessagePipeline, StorageAdapter } from './types'
-
-export class EchoAiProvider implements AiProvider {
-  async complete(prompt: string): Promise<string> {
-    return `Echo: ${prompt}`
-  }
-}
 
 export class Pipeline implements MessagePipeline {
   constructor(private storage: StorageAdapter, private ai: AiProvider, private config: BaconServerConfig) {}
@@ -17,7 +10,18 @@ export class Pipeline implements MessagePipeline {
   async handleUserMessage(sessionId: string, text: string): Promise<ChatMessage> {
     const msg = await this.storage.recordMessage(sessionId, 'user', text, this.maxHistory())
     const history = await this.storage.listMessages(sessionId)
-    const assistantReply = await this.ai.complete(text, history.map((h) => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })))
+    let assistantReply = 'temporarily unavailable'
+    try {
+      const result = await this.ai.chat({
+        prompt: text,
+        history: history.map((h) => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
+        provider: this.config.settings?.ai?.provider,
+      })
+      assistantReply = result.text
+    } catch (err) {
+      assistantReply = 'Our assistants are busy. Please try again shortly.'
+      this.config.logger?.error?.('[ai] provider failure', err)
+    }
     const bot = await this.pushBotMessage(sessionId, assistantReply)
     return bot
   }
