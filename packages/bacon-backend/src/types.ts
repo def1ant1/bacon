@@ -3,12 +3,32 @@ import type { WebSocketServer } from 'ws'
 
 export type Sender = 'user' | 'bot'
 
+export type RichMessageType = 'text' | 'card' | 'product' | 'survey' | 'quick_replies' | string
+
+export interface RichMessagePayload {
+  title?: string
+  body?: string
+  imageUrl?: string
+  /**
+   * Optional CTA buttons or quick replies. Each value is echoed back to the
+   * backend when selected to keep parity across transports.
+   */
+  actions?: { label: string; value: string; url?: string }[]
+  /**
+   * Flexible key/value bag for extensibility. Plugin renderers can interpret
+   * custom fields without requiring schema migrations.
+   */
+  data?: Record<string, any>
+}
+
 export interface ChatMessage {
   id: string
   sessionId: string
   sender: Sender
   text: string
   createdAt: string
+  type?: RichMessageType
+  payload?: RichMessagePayload
 }
 
 export interface StoredFile {
@@ -90,7 +110,13 @@ export interface AdminSettings {
 
 export interface StorageAdapter {
   init?(): Promise<void>
-  recordMessage(sessionId: string, sender: Sender, text: string, maxHistory: number): Promise<ChatMessage>
+  recordMessage(
+    sessionId: string,
+    sender: Sender,
+    text: string,
+    maxHistory: number,
+    options?: { type?: RichMessageType; payload?: RichMessagePayload },
+  ): Promise<ChatMessage>
   listMessages(sessionId: string): Promise<ChatMessage[]>
   listSessions(): Promise<{ sessionId: string; count: number; lastAt: string | null; fileCount: number }[]>
   clearSession(sessionId: string): Promise<void>
@@ -257,6 +283,7 @@ export interface BaconServerConfig {
   plugins?: {
     registry?: import('./plugins/registry').PluginRegistry
   }
+  automation?: import('./automation-rules').AutomationRuntimeConfig
 }
 
 export interface MessagePipeline {

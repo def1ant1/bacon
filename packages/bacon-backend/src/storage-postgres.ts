@@ -87,7 +87,13 @@ export class PostgresStorage implements StorageAdapter {
     }
   }
 
-  async recordMessage(sessionId: string, sender: Sender, text: string, maxHistory: number): Promise<ChatMessage> {
+  async recordMessage(
+    sessionId: string,
+    sender: Sender,
+    text: string,
+    maxHistory: number,
+    options?: { type?: import('./types').RichMessageType; payload?: import('./types').RichMessagePayload },
+  ): Promise<ChatMessage> {
     await this.init()
     const client = await this.pool.connect()
     try {
@@ -100,7 +106,15 @@ export class PostgresStorage implements StorageAdapter {
       await trimHistory(client, sessionId, maxHistory)
       await client.query('commit')
       const row = rows[0]
-      return { id: String(row.id), sessionId, sender, text, createdAt: row.created_at.toISOString() }
+      return {
+        id: String(row.id),
+        sessionId,
+        sender,
+        text,
+        createdAt: row.created_at.toISOString(),
+        type: options?.type,
+        payload: options?.payload,
+      }
     } catch (e) {
       await client.query('rollback')
       throw e
