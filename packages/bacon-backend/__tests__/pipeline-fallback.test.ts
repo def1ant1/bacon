@@ -14,6 +14,6 @@ describe('Pipeline fallback behavior', () => {
     const storage = new MemoryStorage()
     const pipeline = new Pipeline(storage, new FailingProvider(), { settings: { ai: { provider: 'echo', systemPrompt: '' } } })
     const reply = await pipeline.handleUserMessage('s1', 'hello')
-    expect(reply.text).toContain('busy')
+    expect(reply.text.toLowerCase()).toContain('routing')
   })
 })

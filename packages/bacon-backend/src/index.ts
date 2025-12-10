@@ -4,9 +4,10 @@ import fs from 'fs'
 import { WebSocketServer } from 'ws'
 import Busboy from 'busboy'
 import { Pipeline } from './pipeline'
-import { BaconServer, BaconServerConfig, ChatMessage, Logger } from './types'
+import { AuthContext, BaconServer, BaconServerConfig, ChatMessage, Logger } from './types'
 import { MemoryStorage } from './storage-memory'
 import { PostgresStorage } from './storage-postgres'
+import { AgentChannelNotifier, InboxService, MemoryInboxQueue, PostgresInboxQueue } from './inbox'
 import { ProviderRegistry } from './ai/providers/registry'
 import { FetchHttpClient } from './ai/providers/http'
 import { EchoProvider } from './ai/providers/echo'
@@ -20,6 +21,7 @@ import { createKnowledgeBase, KnowledgeBaseService } from './kb/service'
 import { MemoryFlowRepository, PostgresFlowRepository } from './flows/repository'
 import { FlowEngine } from './flows/engine'
 import { buildFlowApi } from './flows/api'
+import jwt from 'jsonwebtoken'
 
 const defaultSettings = {
   general: {
@@ -29,7 +31,7 @@ const defaultSettings = {
     launcherPosition: 'bottom-right' as const,
   },
   branding: { primaryColor: '#2563eb', customCss: '' },
-  behavior: { replyDelayMs: 0, maxHistory: 200, retentionDays: 30 },
+  behavior: { replyDelayMs: 0, maxHistory: 200, retentionDays: 30, handoffConfidenceThreshold: 0.65, handoffMessage: 'Routing you to a human agent. Please hold while we connect you.' },
   transports: {
     default: 'polling' as const,
     allowPolling: true,
@@ -74,6 +76,8 @@ function validateSettings(settings: any) {
   const merged = { ...defaultSettings, ...(settings || {}) }
   merged.behavior.maxHistory = clampInt(merged.behavior.maxHistory, 10, 1000, 200)
   merged.behavior.retentionDays = clampInt(merged.behavior.retentionDays, 1, 365, 30)
+  merged.behavior.handoffConfidenceThreshold = clampNumber(merged.behavior.handoffConfidenceThreshold, 0, 1, 0.65)
+  merged.behavior.handoffMessage = merged.behavior.handoffMessage || defaultSettings.behavior.handoffMessage
   merged.transports.pollIntervalMs = clampInt(merged.transports.pollIntervalMs, 100, 60000, 3000)
   merged.transports.default = merged.transports.default === 'websocket' ? 'websocket' : 'polling'
   merged.transports.allowPolling = !!merged.transports.allowPolling
@@ -88,6 +92,12 @@ function validateSettings(settings: any) {
 
 function clampInt(value: any, min: number, max: number, fallback: number) {
   const num = Number.isFinite(value) ? Number(value) : Number.parseInt(value, 10)
+  if (Number.isNaN(num)) return fallback
+  return Math.min(Math.max(num, min), max)
+}
+
+function clampNumber(value: any, min: number, max: number, fallback: number) {
+  const num = Number(value)
   if (Number.isNaN(num)) return fallback
   return Math.min(Math.max(num, min), max)
 }
@@ -111,20 +121,60 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   const flowApi = buildFlowApi({
     repository: flowRepository,
     engine: config.flows?.engine || new FlowEngine({ logger }),
-    authenticate: (req) => ensureAuth(req),
+    authenticate: (req) => ensureAuth(req, 'admin').ok,
   })
   const kb: KnowledgeBaseService | undefined = config.kb === null ? undefined : createKnowledgeBase(logger)
   const registry = config.providerRegistry || buildProviderRegistry(logger)
   const ai = config.ai || new ProviderRouter(registry, settings.ai.provider as ProviderName)
-  const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb)
+  const inboxQueue =
+    config.inbox?.queue ||
+    (config.storage instanceof PostgresStorage
+      ? new PostgresInboxQueue((config.storage as any).pool)
+      : new MemoryInboxQueue())
+  const notifier = config.inbox?.notifier || new AgentChannelNotifier(logger)
+  const inbox = new InboxService({
+    queue: inboxQueue,
+    storage,
+    notifier,
+    logger,
+    ai,
+    defaultBrandId: config.brandId || 'default',
+  })
+  const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb, inbox)
   const uploadsDir = config.fileHandling?.uploadsDir || path.join(process.cwd(), 'uploads')
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
 
   const authBearer = config.auth?.bearerToken
-  function ensureAuth(req: any): boolean {
-    if (!authBearer) return true
-    const token = req.headers['authorization']?.replace('Bearer ', '')
-    return token === authBearer
+  const jwtSecret = config.auth?.jwtSecret
+  function ensureAuth(req: any, required: 'admin' | 'agent' = 'agent'): AuthContext {
+    const header = req.headers?.['authorization'] || ''
+    const token = (Array.isArray(header) ? header[0] : header)?.toString?.().replace('Bearer ', '')
+    if (authBearer && token === authBearer) return { ok: true, role: 'admin', userId: 'bearer-admin' }
+    if (jwtSecret && token) {
+      try {
+        const payload: any = jwt.verify(token, jwtSecret)
+        const claim = config.auth?.roleClaim || 'role'
+        const roleVal = String(payload?.[claim] || config.auth?.defaultRole || 'agent').toLowerCase()
+        const normalized: 'admin' | 'agent' = roleVal === 'admin' ? 'admin' : 'agent'
+        const ctx: AuthContext = { ok: true, role: normalized, userId: payload?.sub || payload?.userId || payload?.id, raw: payload }
+        if (required === 'admin' && ctx.role !== 'admin') return { ok: false, role: ctx.role, raw: payload, userId: ctx.userId }
+        return ctx
+      } catch (err) {
+        logger.warn('[auth] invalid jwt', err)
+        return { ok: false, role: 'anonymous' }
+      }
+    }
+    if (!authBearer && !jwtSecret) return { ok: true, role: 'admin' }
+    return { ok: false, role: 'anonymous' }
+  }
+
+  function requireRole(req: any, res: any, role: 'admin' | 'agent' = 'agent'): AuthContext | null {
+    const ctx = ensureAuth(req, role)
+    if (!ctx.ok) {
+      sendJson(res, { error: 'unauthorized' }, 401)
+      return null
+    }
+    return ctx
   }
 
   async function retentionSweep() {
@@ -146,7 +196,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   }
 
   async function handleAdminSettings(req: any, res: any) {
-    if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+    if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
     if (req.method === 'GET') return sendJson(res, settings)
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk as Buffer)
@@ -221,7 +271,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     if (url.pathname === '/api/admin/settings') return handleAdminSettings(req, res)
 
     if (url.pathname === '/api/admin/settings/reset') {
-      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const resetTo = validateSettings(config.settingsStore?.reset?.() || config.settings)
       Object.assign(settings, resetTo)
       config.settingsStore?.save?.(settings)
@@ -229,25 +279,100 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     }
 
     if (url.pathname === '/api/admin/sessions') {
-      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const list = await storage.listSessions()
       return sendJson(res, list)
     }
 
     if (url.pathname === '/api/admin/messages') {
-      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!ensureAuth(req, 'agent').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const sessionId = url.searchParams.get('sessionId') || ''
+      if (req.method === 'DELETE') {
+        await storage.clearSession(sessionId)
+        return sendJson(res, { ok: true })
+      }
       const msgs = await storage.listMessages(sessionId)
       return sendJson(res, msgs)
     }
 
+    if (url.pathname === '/api/admin/inbox' && req.method === 'GET') {
+      if (!ensureAuth(req, 'agent').ok) return sendJson(res, { error: 'unauthorized' }, 401)
+      const filters: any = {
+        status: url.searchParams.getAll('status')?.filter(Boolean) || undefined,
+        tag: url.searchParams.get('tag') || undefined,
+        assignedAgentId: url.searchParams.get('agentId') || undefined,
+        brandId: url.searchParams.get('brandId') || undefined,
+        search: url.searchParams.get('q') || undefined,
+        includeNotes: url.searchParams.get('includeNotes') === 'true',
+        includeMessages: url.searchParams.get('includeMessages') === 'true',
+      }
+      if (Array.isArray(filters.status) && filters.status.length === 0) delete filters.status
+      const tickets = await inbox.list(filters)
+      return sendJson(res, tickets)
+    }
+
+    if (url.pathname === '/api/admin/inbox' && req.method === 'POST') {
+      const actor = requireRole(req, res, 'agent')
+      if (!actor) return
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk as Buffer)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+      let payload: any = { ok: true }
+      try {
+        switch (body.action) {
+          case 'assign':
+            payload = await inbox.assign(body.ticketId, body.agentId)
+            logger.info('[audit] assign', { actor: actor.userId || actor.role, ticketId: body.ticketId, agentId: body.agentId })
+            break
+          case 'roundRobinAssign':
+            payload = await inbox.roundRobinAssign(body.ticketId, body.agents || [])
+            logger.info('[audit] round_robin_assign', {
+              actor: actor.userId || actor.role,
+              ticketId: body.ticketId,
+              agents: body.agents,
+            })
+            break
+          case 'status':
+            payload = await inbox.updateStatus(body.ticketId, body.status)
+            logger.info('[audit] status_update', { actor: actor.userId || actor.role, ticketId: body.ticketId, status: body.status })
+            break
+          case 'note':
+            payload = await inbox.addNote(body.ticketId, body.text, actor.userId)
+            logger.info('[audit] note', { actor: actor.userId || actor.role, ticketId: body.ticketId })
+            break
+          case 'tags':
+            payload = await inbox.addTags(body.ticketId, body.tags || [])
+            logger.info('[audit] tags', { actor: actor.userId || actor.role, ticketId: body.ticketId, tags: body.tags })
+            break
+          default:
+            payload = { error: 'unknown_action' }
+        }
+      } catch (err: any) {
+        payload = { error: err?.message || 'inbox_error' }
+      }
+      return sendJson(res, payload, payload.error ? 400 : 200)
+    }
+
+    if (url.pathname === '/api/admin/inbox/assist' && req.method === 'POST') {
+      if (!ensureAuth(req, 'agent').ok) return sendJson(res, { error: 'unauthorized' }, 401)
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk as Buffer)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+      try {
+        const suggestion = await inbox.draftReply(body.ticketId, body.prompt)
+        return sendJson(res, suggestion)
+      } catch (err: any) {
+        return sendJson(res, { error: err?.message || 'draft_failed' }, 400)
+      }
+    }
+
     if (url.pathname === '/api/admin/ai/providers' && req.method === 'GET') {
-      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       return sendJson(res, registry.listMetadata())
     }
 
     if (url.pathname === '/api/admin/ai/providers/health' && req.method === 'GET') {
-      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const health = await registry.health({ logger, metrics: config.metrics })
       const ok = health.every((h) => h.ok)
       config.metrics?.onHealthcheck?.(ok ? 'ok' : 'fail', { component: 'ai', health })
@@ -255,7 +380,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     }
 
     if (url.pathname === '/api/admin/kb/upload' && req.method === 'POST') {
-      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       if (!kb) return sendJson(res, { error: 'kb_unavailable' }, 503)
       const bb = Busboy({ headers: req.headers })
       let brandId = url.searchParams.get('brandId') || config.brandId || 'default'
@@ -297,6 +422,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     }
 
     if (url.pathname === '/api/admin/clear' && req.method === 'POST') {
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(chunk as Buffer)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
@@ -305,6 +431,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     }
 
     if (url.pathname === '/api/admin/send' && req.method === 'POST') {
+      if (!ensureAuth(req, 'agent').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(chunk as Buffer)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
@@ -315,12 +442,14 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     if (url.pathname === '/api/upload' && req.method === 'POST') return handleUpload(req, res)
 
     if (url.pathname === '/api/admin/files') {
+      if (!ensureAuth(req, 'agent').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const sessionId = url.searchParams.get('sessionId') || ''
       const files = await storage.listFiles(sessionId)
       return sendJson(res, files)
     }
 
     if (url.pathname === '/api/admin/file' && req.method === 'DELETE') {
+      if (!ensureAuth(req, 'agent').ok) return sendJson(res, { error: 'unauthorized' }, 401)
       const id = url.searchParams.get('id') || ''
       await storage.deleteFile(id)
       return sendJson(res, { ok: true })
@@ -336,7 +465,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       app.use(handler)
       if (websocketEnabled()) {
         const http = createHttpServer(app)
-        attachWs(http, pipeline, logger, websocketEnabled)
+        attachWs(http, pipeline, logger, websocketEnabled, notifier)
         return http
       }
     },
@@ -344,7 +473,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       instance.use(handler)
       if (websocketEnabled()) {
         const http = createHttpServer(instance)
-        attachWs(http, pipeline, logger, websocketEnabled)
+        attachWs(http, pipeline, logger, websocketEnabled, notifier)
         return http
       }
     },
@@ -352,7 +481,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
   if (websocketEnabled()) {
     const http = createHttpServer(handler as any)
-    server.wss = attachWs(http, pipeline, logger, websocketEnabled)
+    server.wss = attachWs(http, pipeline, logger, websocketEnabled, notifier)
     // Keep HTTP server open only when consumer wants it; tests can listen manually
     ;(server as any)._httpServer = http
   }
@@ -361,7 +490,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   return server
 }
 
-function attachWs(http: any, pipeline: Pipeline, logger: Logger, enabled: () => boolean) {
+function attachWs(http: any, pipeline: Pipeline, logger: Logger, enabled: () => boolean, notifier?: AgentChannelNotifier) {
   const wss = new WebSocketServer({ server: http })
   wss.on('connection', (ws) => {
     if (!enabled()) {
@@ -372,6 +501,11 @@ function attachWs(http: any, pipeline: Pipeline, logger: Logger, enabled: () => 
     ws.on('message', async (raw) => {
       try {
         const payload = JSON.parse(String(raw) || '{}')
+        if (payload?.type === 'subscribe' && payload.channel) {
+          notifier?.subscribe(String(payload.channel), ws)
+          ws.send(JSON.stringify({ type: 'subscribed', channel: payload.channel }))
+          return
+        }
         const messagePayload = payload.payload || payload
         const sessionId = String(messagePayload.sessionId || payload.sessionId || 'ws-session')
         const message = String(messagePayload.message || messagePayload.text || payload.message || '')
@@ -394,4 +528,5 @@ export { MemoryStorage, PostgresStorage }
 export { PostgresSettingsStore } from './settings-postgres'
 export { ProviderRegistry } from './ai/providers/registry'
 export { ProviderRouter } from './ai/provider-router'
+export { AgentChannelNotifier, InboxService, MemoryInboxQueue, PostgresInboxQueue, RedisInboxQueue } from './inbox'
 export type { BaconServerConfig, BaconServer, ChatMessage } from './types'

@@ -10,7 +10,7 @@ export class EchoProvider implements AiProviderV2 {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const historySuffix = request.history?.length ? ` [history:${request.history.length}]` : ''
-    return { text: `Echo: ${request.prompt}${historySuffix}`, requestId: request.requestId }
+    return { text: `Echo: ${request.prompt}${historySuffix}`, requestId: request.requestId, confidence: 0.99 }
   }
 
   async embed(request: EmbedRequest): Promise<EmbedResponse> {
