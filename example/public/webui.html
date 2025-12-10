@@ -3,105 +3,148 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Backend WebUI · Chatbot1</title>
+    <title>Agent Console · Inbox</title>
     <style>
-      :root { --fg:#111; --muted:#666; --accent:#2563eb; --bg:#fafafa; --card:#fff; --border:#e5e7eb; }
-      body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:var(--fg); background:var(--bg); }
-      header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--card); position:sticky; top:0; }
-      header h1 { font-size:16px; margin:0; }
-      header a { color:var(--accent); text-decoration:none; }
-      .wrap { display:grid; grid-template-columns:280px 1fr; height:calc(100vh - 50px); }
-      .sidebar { border-right:1px solid var(--border); background:var(--card); overflow:auto; }
-      .content { overflow:auto; }
-      .section { padding:12px 16px; }
-      .session { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
-      .session:hover { background:#f3f4f6; }
-      .session .meta { color:var(--muted); font-size:12px; }
-      .msgs { padding:16px; }
-      .files { padding:12px 16px; border-top:1px solid var(--border); background:#fafafa; }
-      .files h3 { margin:8px 0; font-size:13px; color:#111; }
-      .files .file { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px dashed #e5e7eb; }
-      .files .file:last-child { border-bottom: none; }
-      .files .meta { color:var(--muted); font-size:12px; }
-      .msg { margin:8px 0; display:flex; }
-      .bubble { max-width:70%; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:#fff; }
-      .msg.user { justify-content:flex-end; }
-      .msg.user .bubble { background:#e8f0ff; border-color:#d0dbff; }
-      .msg .time { color:var(--muted); font-size:11px; margin:2px 4px; }
-      .toolbar { display:flex; gap:8px; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--card); align-items:center; }
-      button { padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:#fff; cursor:pointer; }
-      button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-      input[type="text"] { padding:6px 8px; border-radius:6px; border:1px solid var(--border); width:100%; }
-      .empty { color:var(--muted); padding:16px; }
-      /* Modal viewer */
-      .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 50; }
-      .modal.show { display: flex; }
-      .modal-dialog { width: min(90vw, 900px); height: min(85vh, 760px); background:#fff; border-radius:10px; box-shadow: 0 20px 50px rgba(0,0,0,0.35); display:flex; flex-direction:column; overflow:hidden; }
-      .modal-head { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border); background:#f8fafc; }
-      .modal-title { font-weight:600; font-size:14px; }
-      .modal-body { flex:1; overflow:auto; background:#111; display:flex; align-items:center; justify-content:center; }
-      .modal-body iframe, .modal-body img, .modal-body object { width:100%; height:100%; border:0; background:#fff; }
-      .close { border:none; background:#e5e7eb; padding:6px 10px; border-radius:6px; cursor:pointer; }
+      :root {
+        --fg: #0f172a;
+        --muted: #475569;
+        --accent: #2563eb;
+        --bg: #f8fafc;
+        --card: #fff;
+        --border: #e2e8f0;
+        --danger: #ef4444;
+        --success: #16a34a;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial; color: var(--fg); background: var(--bg); }
+      header { position: sticky; top: 0; z-index: 5; background: var(--card); padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+      header h1 { margin: 0; font-size: 16px; }
+      header .meta { color: var(--muted); font-size: 12px; }
+      .chip { padding: 4px 8px; border-radius: 999px; background: #e2e8f0; color: #0f172a; font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; }
+      .wrap { display: grid; grid-template-columns: 2fr 3fr; gap: 12px; padding: 12px; height: calc(100vh - 70px); }
+      .column-grid { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: 10px; align-content: start; }
+      .col { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px; min-height: 200px; display: flex; flex-direction: column; }
+      .col h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+      .ticket { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; background: #fff; cursor: pointer; display: grid; gap: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+      .ticket:hover { border-color: var(--accent); }
+      .ticket .id { font-weight: 600; font-size: 13px; }
+      .ticket .meta { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .ticket .tag { background: #eef2ff; color: #312e81; padding: 2px 6px; border-radius: 6px; font-size: 11px; }
+      .ticket .message { color: var(--fg); font-size: 13px; }
+      .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; height: 100%; }
+      .panel .section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+      .panel h3 { margin: 0 0 6px; font-size: 14px; }
+      .panel .stack { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .transcript { flex: 1; overflow: auto; padding: 12px 14px; }
+      .msg { margin-bottom: 10px; display: grid; gap: 4px; }
+      .msg .who { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+      .bubble { background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+      .composer { padding: 12px 14px; border-top: 1px solid var(--border); display: grid; gap: 8px; }
+      textarea, input[type="text"], input[type="search"] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
+      button { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-weight: 600; }
+      button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+      button.ghost { background: transparent; }
+      button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+      .note-list { max-height: 180px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: #f8fafc; display: grid; gap: 6px; }
+      .note { font-size: 13px; }
+      .note .meta { color: var(--muted); font-size: 11px; }
+      .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .pill { padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: #f1f5f9; font-size: 12px; }
+      .status-new { border-left: 3px solid #2563eb; }
+      .status-assigned { border-left: 3px solid #16a34a; }
+      .status-snoozed { border-left: 3px solid #f59e0b; }
+      .status-closed { border-left: 3px solid #475569; }
+      .macro { padding: 6px 8px; border: 1px dashed var(--border); border-radius: 8px; cursor: pointer; }
+      .macro:hover { border-color: var(--accent); }
+      .inline-input { width: auto; min-width: 140px; }
+      .badge { background: #0ea5e9; color: #fff; padding: 2px 6px; border-radius: 6px; font-size: 11px; }
     </style>
   </head>
   <body>
     <header>
-      <h1>Backend WebUI</h1>
-      <nav>
-        <a href="/" title="Open app">Open App</a>
-        ·
-        <a href="/admin.html" title="Open admin">Admin</a>
-      </nav>
+      <div>
+        <h1>Agent Console</h1>
+        <div class="meta">Monitor queue status, assignments, transcripts, and automation assist.</div>
+      </div>
+      <div class="toolbar" style="margin-left:auto;">
+        <label>Agent ID <input id="agentId" class="inline-input" type="text" /></label>
+        <button id="subscribe" class="primary">Subscribe</button>
+        <span id="wsStatus" class="pill">WS: idle</span>
+      </div>
     </header>
     <div class="wrap">
-      <aside class="sidebar">
-        <div class="toolbar">
-          <button id="refresh" class="primary">Refresh</button>
-        </div>
-        <div id="sessions"></div>
-      </aside>
-      <main class="content">
-        <div class="toolbar">
-          <div style="flex:1; display:flex; gap:8px; align-items:center;">
-            <strong id="currentSession">No session selected</strong>
+      <div class="column-grid" id="columns"></div>
+      <div class="panel">
+        <div class="section">
+          <div class="toolbar">
+            <div>
+              <h3 id="selectedTitle" style="margin:0;">No ticket selected</h3>
+              <div id="selectedMeta" class="meta"></div>
+            </div>
+            <button id="refresh" class="ghost">Refresh</button>
           </div>
-          <button id="clearSession">Clear Session</button>
         </div>
-        <div id="messages" class="msgs"></div>
-        <div class="toolbar">
-          <input type="text" id="adminText" placeholder="Type a message to send to the user..." style="flex:1;" />
-          <button id="adminSend" class="primary">Send</button>
-        </div>
-        <div id="files" class="files">
-          <h3>Files</h3>
-          <div id="filesList" class="list"></div>
-        </div>
-      </main>
-      <!-- File viewer modal -->
-      <div id="viewerModal" class="modal" role="dialog" aria-modal="true" aria-label="File viewer">
-        <div class="modal-dialog">
-          <div class="modal-head">
-            <div class="modal-title" id="viewerTitle">File</div>
-            <button id="viewerClose" class="close">Close</button>
+        <div class="transcript" id="transcript"></div>
+        <div class="section" style="border-top:1px solid var(--border);">
+          <div class="toolbar">
+            <button id="assignMe">Assign to me</button>
+            <button id="snooze">Snooze</button>
+            <button id="close">Close</button>
+            <button id="reopen">Re-open</button>
+            <input id="manualAssignee" type="text" class="inline-input" placeholder="Assign to..." />
+            <button id="assignManual">Assign</button>
           </div>
-          <div class="modal-body" id="viewerBody"></div>
+          <div class="toolbar" style="margin-top:8px;">
+            <input id="tagsInput" type="text" class="inline-input" placeholder="Tags (csv)" />
+            <button id="saveTags">Save tags</button>
+            <input id="roundRobinAgents" type="text" class="inline-input" placeholder="Round robin agents csv" />
+            <button id="roundRobin">Round robin assign</button>
+          </div>
+        </div>
+        <div class="composer">
+          <label style="display:block; font-weight:600;">Reply draft</label>
+          <textarea id="replyText" rows="3" placeholder="Type reply to user..."></textarea>
+          <div class="toolbar">
+            <button id="sendReply" class="primary">Send reply</button>
+            <button id="draftAssist">AI Draft reply</button>
+            <button id="addNote">Add note</button>
+          </div>
+          <div class="toolbar" id="macros"></div>
+          <div id="notes" class="note-list"></div>
         </div>
       </div>
-      </div>
+    </div>
     <script>
-      const $ = (sel) => document.querySelector(sel);
-      const sessionsEl = $('#sessions');
-      const messagesEl = $('#messages');
-      const currentSessionEl = $('#currentSession');
-      const filesListEl = document.getElementById('filesList');
-      const adminTextEl = document.getElementById('adminText');
-      const adminSendBtn = document.getElementById('adminSend');
-      const viewerModal = document.getElementById('viewerModal');
-      const viewerTitle = document.getElementById('viewerTitle');
-      const viewerBody = document.getElementById('viewerBody');
-      const viewerClose = document.getElementById('viewerClose');
-      let currentSession = '';
-      let filesCache = [];
+      const columnsEl = document.getElementById('columns');
+      const selectedTitle = document.getElementById('selectedTitle');
+      const selectedMeta = document.getElementById('selectedMeta');
+      const transcriptEl = document.getElementById('transcript');
+      const replyText = document.getElementById('replyText');
+      const notesEl = document.getElementById('notes');
+      const wsStatus = document.getElementById('wsStatus');
+      const macrosEl = document.getElementById('macros');
+      const agentIdInput = document.getElementById('agentId');
+      const state = { tickets: [], selected: null, messages: {}, notes: {}, agentId: localStorage.getItem('agentId') || 'agent-1' };
+      agentIdInput.value = state.agentId;
+
+      const cannedMacros = [
+        'Thanks for reaching out! I am reviewing your request now.',
+        'Can you share a screenshot and the steps that led to this issue?',
+        'I am escalating this to a specialist. We will update you shortly.',
+      ];
+
+      function renderMacros() {
+        macrosEl.innerHTML = '';
+        cannedMacros.forEach((m) => {
+          const btn = document.createElement('div');
+          btn.className = 'macro';
+          btn.textContent = m;
+          btn.onclick = () => {
+            replyText.value = ((replyText.value || '') + '\n' + m).trim();
+          };
+          macrosEl.appendChild(btn);
+        });
+      }
 
       async function api(path, opts) {
         const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -109,188 +152,203 @@
         return res.json();
       }
 
-      function fmtTime(iso) {
-        try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+      function groupTickets() {
+        const buckets = { new: [], assigned: [], snoozed: [], closed: [] };
+        for (const t of state.tickets) buckets[t.status]?.push(t);
+        return buckets;
       }
 
-      async function loadSessions() {
-        sessionsEl.innerHTML = '<div class="section">Loading…</div>';
-        try {
-          const data = await api('/api/admin/sessions');
-          if (!data.length) {
-            sessionsEl.innerHTML = '<div class="empty">No sessions yet.</div>';
-            return;
+      function renderTickets() {
+        const grouped = groupTickets();
+        const statusOrder = [
+          { key: 'new', label: 'New' },
+          { key: 'assigned', label: 'Assigned' },
+          { key: 'snoozed', label: 'Snoozed' },
+          { key: 'closed', label: 'Closed' },
+        ];
+        columnsEl.innerHTML = '';
+        statusOrder.forEach((col) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'col';
+          wrap.innerHTML = `<h2>${col.label} <span class="badge">${grouped[col.key].length}</span></h2>`;
+          const list = document.createElement('div');
+          grouped[col.key].forEach((t) => {
+            const card = document.createElement('div');
+            card.className = `ticket status-${t.status}`;
+            card.innerHTML = `
+              <div class="id">${t.sessionId}</div>
+              <div class="meta">
+                ${t.assignedAgentId ? `<span class="pill">${t.assignedAgentId}</span>` : '<span class="pill">Unassigned</span>'}
+                ${t.tags?.map((tag) => `<span class="tag">${tag}</span>`).join('') || ''}
+              </div>
+              <div class="message">${(t.lastMessage || '').slice(0, 120)}</div>
+            `;
+            card.onclick = () => selectTicket(t.id);
+            list.appendChild(card);
+          });
+          if (!grouped[col.key].length) {
+            const empty = document.createElement('div');
+            empty.className = 'meta';
+            empty.textContent = 'Empty';
+            list.appendChild(empty);
           }
-          sessionsEl.innerHTML = '';
-          for (const s of data) {
-            const div = document.createElement('div');
-            div.className = 'session';
-            div.innerHTML = `<div><strong>${s.sessionId}</strong></div><div class="meta">${s.count} messages � ${s.lastAt ? fmtTime(s.lastAt) : "�"}${s.id ? " � ID: "+s.id : (s.conversationId?" � ID: "+s.conversationId:"")}</div>`;
-            // Append file count into the meta line if available
-            try {
-              const metaEl = div.querySelector('.meta');
-              if (metaEl && typeof s.fileCount === 'number') {
-                metaEl.textContent = (metaEl.textContent || '') + ' - ' + s.fileCount + ' files';
-              }
-            } catch {}
-            div.onclick = () => selectSession(s.sessionId);
-            sessionsEl.appendChild(div);
-          }
-        } catch (e) {
-          sessionsEl.innerHTML = '<div class="section">Failed to load sessions.</div>';
+          wrap.appendChild(list);
+          columnsEl.appendChild(wrap);
+        });
+      }
+
+      async function loadInbox() {
+        const params = new URLSearchParams({ includeNotes: 'true' });
+        const data = await api('/api/admin/inbox?' + params.toString());
+        state.tickets = data || [];
+        renderTickets();
+        if (state.selected) refreshSelection();
+      }
+
+      async function refreshSelection() {
+        const ticket = state.tickets.find((t) => t.id === state.selected);
+        if (!ticket) {
+          selectedTitle.textContent = 'No ticket selected';
+          transcriptEl.innerHTML = '<div class="meta">Select a ticket to view transcripts.</div>';
+          notesEl.innerHTML = '';
+          return;
         }
+        selectedTitle.textContent = `Ticket ${ticket.sessionId}`;
+        selectedMeta.textContent = `Status: ${ticket.status.toUpperCase()} • Agent: ${ticket.assignedAgentId || 'Unassigned'} • Tags: ${(ticket.tags || []).join(', ') || 'none'}`;
+        document.getElementById('tagsInput').value = (ticket.tags || []).join(',');
+        await loadTranscript(ticket);
+        renderNotes(ticket);
       }
 
-      async function selectSession(id) {
-        currentSession = id;
-        currentSessionEl.textContent = id ? 'Session: ' + id : 'No session selected';
-        await loadFiles();
-        await loadMessages();
+      async function loadTranscript(ticket) {
+        const msgs = await api('/api/admin/messages?sessionId=' + encodeURIComponent(ticket.sessionId));
+        state.messages[ticket.id] = msgs;
+        transcriptEl.innerHTML = '';
+        msgs.forEach((m) => {
+          const row = document.createElement('div');
+          row.className = 'msg';
+          row.innerHTML = `<div class="who">${m.sender} · ${new Date(m.createdAt).toLocaleString()}</div><div class="bubble">${m.text}</div>`;
+          transcriptEl.appendChild(row);
+        });
+        transcriptEl.scrollTop = transcriptEl.scrollHeight;
       }
 
-      async function loadMessages() {
-        if (!currentSession) { messagesEl.innerHTML = '<div class="empty">Select a session.</div>'; return; }
-        messagesEl.innerHTML = '';
-        try {
-          const msgs = await api('/api/admin/messages?sessionId=' + encodeURIComponent(currentSession));
-          if (!msgs.length) { messagesEl.innerHTML = '<div class="empty">No messages.</div>'; return; }
-          for (const m of msgs) {
-            const row = document.createElement('div');
-            row.className = 'msg ' + m.sender;
-            const bubble = document.createElement('div');
-            bubble.className = 'bubble';
-            const time = document.createElement('div');
-            time.className = 'time';
-            time.textContent = fmtTime(m.createdAt);
-
-            const match = /^Uploaded file:\s*(.+)$/.exec(m.text || '');
-            if (match) {
-              const name = match[1];
-              const rec = findFileByName(name);
-              if (rec) {
-                bubble.appendChild(document.createTextNode('Uploaded file: '));
-                const a = document.createElement('a');
-                a.href = rec.url;
-                a.textContent = name;
-                a.target = '_blank';
-                a.rel = 'noreferrer';
-                a.addEventListener('click', (e) => { e.preventDefault(); openViewer(rec.url, rec.mimeType, name); });
-                bubble.appendChild(a);
-              } else {
-                bubble.textContent = m.text;
-              }
-            } else {
-              bubble.textContent = m.text;
-            }
-            row.appendChild(bubble);
-            row.appendChild(time);
-            messagesEl.appendChild(row);
-          }
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        } catch (e) {
-          messagesEl.innerHTML = '<div class="section">Failed to load messages.</div>';
-        }
+      function renderNotes(ticket) {
+        notesEl.innerHTML = '';
+        (ticket.notes || []).forEach((n) => {
+          const row = document.createElement('div');
+          row.className = 'note';
+          row.innerHTML = `<div class="meta">${n.authorId || 'agent'} · ${new Date(n.createdAt).toLocaleString()}</div><div>${n.text}</div>`;
+          notesEl.appendChild(row);
+        });
+        if (!notesEl.innerHTML) notesEl.innerHTML = '<div class="meta">No notes yet.</div>';
       }
 
-      async function loadFiles() {
-        if (!currentSession) { filesListEl.innerHTML = ''; return; }
-        filesListEl.innerHTML = '<div class="meta">Loading…</div>';
-        try {
-          const files = await api('/api/admin/files?sessionId=' + encodeURIComponent(currentSession));
-          filesCache = files || [];
-          if (!files.length) { filesListEl.innerHTML = '<div class="meta">No files.</div>'; return; }
-          filesListEl.innerHTML = '';
-          for (const f of files) {
-            const row = document.createElement('div');
-            row.className = 'file';
-            const size = f.sizeBytes ? ` • ${(Number(f.sizeBytes)/1024).toFixed(1)} KB` : '';
-            row.innerHTML = `<div><a href="${f.url}" target="_blank" rel="noreferrer">${escapeHtml(f.originalName)}</a><div class="meta">${fmtTime(f.createdAt)}${size}</div></div>`;
-            filesListEl.appendChild(row);
-            // Append delete action
-            (function(){
-              try {
-                const actions = document.createElement('div');
-                const btn = document.createElement('button');
-                btn.textContent = 'Delete';
-                btn.addEventListener('click', async () => {
-                  await api('/api/admin/file?id=' + encodeURIComponent(f.id), { method: 'DELETE' });
-                  await loadFiles();
-                });
-                actions.appendChild(btn);
-                row.appendChild(actions);
-              } catch {}
-            })();
-          }
-          // Intercept file link clicks to open inline viewer
-          filesListEl.querySelectorAll('a').forEach(a => {
-            a.addEventListener('click', (e) => {
-              const href = (e.currentTarget as HTMLAnchorElement).getAttribute('href');
-              if (!href) return;
-              e.preventDefault();
-              const rec = filesCache.find(f => f.url === href);
-              openViewer(href, rec?.mimeType, rec?.originalName || href);
-            })
-          })
-        } catch (e) {
-          filesListEl.innerHTML = '<div class="meta">Failed to load files.</div>';
-        }
+      async function selectTicket(id) {
+        state.selected = id;
+        await refreshSelection();
       }
 
-      function findFileByName(name) {
-        if (!filesCache || !filesCache.length) return null;
-        for (let i = filesCache.length - 1; i >= 0; i--) {
-          if ((filesCache[i].originalName || '').trim() === name.trim()) return filesCache[i];
-        }
-        return null;
+      async function sendAction(action, payload) {
+        await api('/api/admin/inbox', { method: 'POST', body: JSON.stringify({ action, ...payload }) });
+        await loadInbox();
       }
 
-      function openViewer(url, mime, title) {
-        document.getElementById('viewerTitle').textContent = title || 'File';
-        const body = document.getElementById('viewerBody');
-        body.innerHTML = '';
-        const ext = (url.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
-        if ((mime && mime.startsWith('image/')) || ['png','jpg','jpeg','gif','webp','bmp','svg'].includes(ext)) {
-          const img = document.createElement('img');
-          img.src = url; img.alt = title || 'image';
-          body.appendChild(img);
-        } else if ((mime && mime.includes('pdf')) || ext === 'pdf') {
-          const frame = document.createElement('iframe');
-          frame.src = url; body.appendChild(frame);
-        } else {
-          const frame = document.createElement('iframe');
-          frame.src = url; body.appendChild(frame);
-        }
-        (document.getElementById('viewerModal') as any).classList.add('show');
-      }
+      document.getElementById('refresh').onclick = loadInbox;
+      document.getElementById('assignMe').onclick = () => {
+        if (!state.selected) return;
+        sendAction('assign', { ticketId: state.selected, agentId: state.agentId });
+      };
+      document.getElementById('assignManual').onclick = () => {
+        if (!state.selected) return;
+        const agent = document.getElementById('manualAssignee').value.trim();
+        if (!agent) return;
+        sendAction('assign', { ticketId: state.selected, agentId: agent });
+      };
+      document.getElementById('snooze').onclick = () => state.selected && sendAction('status', { ticketId: state.selected, status: 'snoozed' });
+      document.getElementById('close').onclick = () => state.selected && sendAction('status', { ticketId: state.selected, status: 'closed' });
+      document.getElementById('reopen').onclick = () => state.selected && sendAction('status', { ticketId: state.selected, status: 'assigned' });
+      document.getElementById('roundRobin').onclick = () => {
+        if (!state.selected) return;
+        const agents = (document.getElementById('roundRobinAgents').value || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        sendAction('roundRobinAssign', { ticketId: state.selected, agents });
+      };
+      document.getElementById('saveTags').onclick = () => {
+        if (!state.selected) return;
+        const tags = (document.getElementById('tagsInput').value || '')
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean);
+        sendAction('tags', { ticketId: state.selected, tags });
+      };
 
-      document.getElementById('viewerClose').addEventListener('click', () => (document.getElementById('viewerModal') as any).classList.remove('show'))
-      document.getElementById('viewerModal').addEventListener('click', (e) => { if (e.target === document.getElementById('viewerModal')) (document.getElementById('viewerModal') as any).classList.remove('show') })
-
-      function escapeHtml(s) {
-        return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-      }
-
-      async function clearCurrent() {
-        if (!currentSession) return;
-        await api('/api/admin/messages?sessionId=' + encodeURIComponent(currentSession), { method: 'DELETE' });
-        await loadSessions();
-        messagesEl.innerHTML = '<div class="empty">Cleared.</div>';
-      }
-
-      $('#refresh').onclick = loadSessions;
-      $('#clearSession').onclick = clearCurrent;
-      adminSendBtn.onclick = async () => {
-        if (!currentSession) return;
-        const text = (adminTextEl.value || '').trim();
+      document.getElementById('sendReply').onclick = async () => {
+        if (!state.selected) return;
+        const ticket = state.tickets.find((t) => t.id === state.selected);
+        const text = replyText.value.trim();
         if (!text) return;
-        await api('/api/admin/send', { method: 'POST', body: JSON.stringify({ sessionId: currentSession, text }) });
-        adminTextEl.value = '';
-        await loadMessages();
+        await api('/api/admin/send', { method: 'POST', body: JSON.stringify({ sessionId: ticket.sessionId, text }) });
+        replyText.value = '';
+        await loadTranscript(ticket);
+      };
+
+      document.getElementById('draftAssist').onclick = async () => {
+        if (!state.selected) return;
+        const data = await api('/api/admin/inbox/assist', {
+          method: 'POST',
+          body: JSON.stringify({ ticketId: state.selected, prompt: replyText.value || undefined }),
+        });
+        replyText.value = data.text || data.reply || '';
+      };
+
+      document.getElementById('addNote').onclick = async () => {
+        if (!state.selected) return;
+        const text = replyText.value.trim();
+        if (!text) return;
+        await sendAction('note', { ticketId: state.selected, text });
+        replyText.value = '';
+      };
+
+      function subscribeWs() {
+        try {
+          if (window._ws) window._ws.close();
+        } catch {}
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${proto}://${location.host}${(window.__WS_PATH__ || '/api/chat/ws')}`);
+        window._ws = ws;
+        wsStatus.textContent = 'WS: connecting';
+        ws.onopen = () => {
+          wsStatus.textContent = 'WS: connected';
+          ws.send(JSON.stringify({ type: 'subscribe', channel: `agent:${state.agentId || 'all'}` }));
+          ws.send(JSON.stringify({ type: 'subscribe', channel: 'agent:all' }));
+        };
+        ws.onclose = () => (wsStatus.textContent = 'WS: closed');
+        ws.onerror = () => (wsStatus.textContent = 'WS: error');
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type && msg.type.startsWith('ticket')) {
+              loadInbox();
+            }
+          } catch (e) {
+            console.warn('ws parse failed', e);
+          }
+        };
       }
 
-      loadSessions();
-      // Poll sessions list every 5s
-      setInterval(() => { loadSessions(); if (currentSession) { loadFiles(); loadMessages(); } }, 5000);
+      document.getElementById('subscribe').onclick = () => {
+        state.agentId = agentIdInput.value.trim() || 'agent-1';
+        localStorage.setItem('agentId', state.agentId);
+        subscribeWs();
+      };
+
+      renderMacros();
+      loadInbox();
+      subscribeWs();
+      setInterval(loadInbox, 7000);
     </script>
   </body>
-  </html>
+</html>

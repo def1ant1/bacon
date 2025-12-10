@@ -37,6 +37,8 @@ export interface AdminSettings {
     replyDelayMs: number
     maxHistory: number
     retentionDays: number
+    handoffConfidenceThreshold?: number
+    handoffMessage?: string
   }
   transports: {
     default: 'polling' | 'websocket'
@@ -87,7 +89,7 @@ export interface AiProvider {
       provider?: string
       requestId?: string
     },
-  ): Promise<{ text: string; requestId?: string }>
+  ): Promise<{ text: string; requestId?: string; confidence?: number }>
   embed?(request: { text: string; model?: string }): Promise<{ vector: number[] }>
   metadata?(): { name: string; models?: string[] }
   checkHealth?(): Promise<{ ok: boolean; name: string }>
@@ -109,6 +111,62 @@ export interface Logger {
 export interface FileHandler {
   uploadsDir: string
   allowUploads: boolean
+}
+
+export type TicketStatus = 'new' | 'assigned' | 'snoozed' | 'closed'
+
+export interface TicketNote {
+  id: string
+  ticketId: string
+  authorId?: string
+  text: string
+  createdAt: string
+}
+
+export interface InboxTicket {
+  id: string
+  sessionId: string
+  brandId: string
+  status: TicketStatus
+  tags: string[]
+  assignedAgentId?: string | null
+  lastMessage?: string
+  confidence?: number
+  createdAt: string
+  updatedAt: string
+  notes?: TicketNote[]
+}
+
+export interface InboxFilters {
+  status?: TicketStatus | TicketStatus[]
+  tag?: string
+  assignedAgentId?: string
+  brandId?: string
+  search?: string
+  includeNotes?: boolean
+}
+
+export interface InboxQueueAdapter {
+  init?(): Promise<void>
+  enqueue(ticket: {
+    sessionId: string
+    brandId: string
+    tags?: string[]
+    confidence?: number
+    lastMessage?: string
+  }): Promise<InboxTicket>
+  update(ticketId: string, patch: Partial<Omit<InboxTicket, 'id' | 'createdAt'>>): Promise<InboxTicket | null>
+  addNote(ticketId: string, note: Omit<TicketNote, 'id' | 'createdAt' | 'ticketId'>): Promise<TicketNote>
+  list(filters?: InboxFilters): Promise<InboxTicket[]>
+  getBySession(sessionId: string): Promise<InboxTicket | null>
+  get(ticketId: string): Promise<InboxTicket | null>
+}
+
+export interface AuthContext {
+  ok: boolean
+  role: 'admin' | 'agent' | 'anonymous'
+  userId?: string
+  raw?: any
 }
 
 export interface BaconServerConfig {
@@ -138,11 +196,20 @@ export interface BaconServerConfig {
   behavior?: {
     maxHistory?: number
     retentionDays?: number
+    handoffConfidenceThreshold?: number
+    handoffMessage?: string
   }
   auth?: {
     bearerToken?: string
+    jwtSecret?: string
+    roleClaim?: string
+    defaultRole?: 'admin' | 'agent'
   }
   providerRegistry?: any
+  inbox?: {
+    queue?: InboxQueueAdapter
+    notifier?: any
+  }
 }
 
 export interface MessagePipeline {

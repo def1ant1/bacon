@@ -29,6 +29,7 @@ export interface ChatResponse {
   raw?: any
   requestId?: string
   timingMs?: number
+  confidence?: number
 }
 
 export interface EmbedRequest {

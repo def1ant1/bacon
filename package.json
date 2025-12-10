@@ -37,6 +37,7 @@
   "devDependencies": {
     "busboy": "^1.6.0",
     "pg": "^8.13.1",
+    "jsonwebtoken": "^9.0.2",
     "uuid": "^9.0.1",
     "ws": "^8.18.0",
     "typescript": "^5.0.0",

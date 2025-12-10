@@ -1,5 +1,6 @@
 import { AiProvider, BaconServerConfig, ChatMessage, MessagePipeline, StorageAdapter } from './types'
 import { KnowledgeBaseService } from './kb/service'
+import { InboxService } from './inbox'
 
 export class Pipeline implements MessagePipeline {
   constructor(
@@ -7,6 +8,7 @@ export class Pipeline implements MessagePipeline {
     private ai: AiProvider,
     private config: BaconServerConfig,
     private kb?: KnowledgeBaseService,
+    private inbox?: InboxService,
   ) {}
 
   private maxHistory() {
@@ -14,9 +16,10 @@ export class Pipeline implements MessagePipeline {
   }
 
   async handleUserMessage(sessionId: string, text: string): Promise<ChatMessage> {
-    const msg = await this.storage.recordMessage(sessionId, 'user', text, this.maxHistory())
+    await this.storage.recordMessage(sessionId, 'user', text, this.maxHistory())
     const history = await this.storage.listMessages(sessionId)
     let assistantReply = 'temporarily unavailable'
+    let confidence = 1
     let kbContext: string | null = null
     try {
       if (this.kb) {
@@ -41,10 +44,33 @@ export class Pipeline implements MessagePipeline {
         provider: this.config.settings?.ai?.provider,
       })
       assistantReply = result.text
+      confidence = result.confidence ?? 1
     } catch (err) {
       assistantReply = 'Our assistants are busy. Please try again shortly.'
+      confidence = 0
       this.config.logger?.error?.('[ai] provider failure', err)
     }
+
+    const threshold = Number(
+      this.config.behavior?.handoffConfidenceThreshold ??
+        this.config.settings?.behavior?.handoffConfidenceThreshold ??
+        0.65,
+    )
+
+    if (confidence < threshold) {
+      await this.inbox?.upsertFromUserMessage({
+        sessionId,
+        text,
+        brandId: this.config.brandId,
+        confidence,
+      })
+      const handoffMessage =
+        this.config.behavior?.handoffMessage ||
+        this.config.settings?.behavior?.handoffMessage ||
+        'Routing you to a human agent. Please hold while we connect you.'
+      return this.pushBotMessage(sessionId, handoffMessage)
+    }
+
     const bot = await this.pushBotMessage(sessionId, assistantReply)
     return bot
   }

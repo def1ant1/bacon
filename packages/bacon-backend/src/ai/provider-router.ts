@@ -9,10 +9,15 @@ import { ProviderName } from './providers/types'
 export class ProviderRouter implements AiProvider {
   constructor(private readonly registry: ProviderRegistry, private readonly defaultProvider: ProviderName = 'echo') {}
 
-  async chat(request: { prompt: string; history?: { role: 'user' | 'assistant' | 'system'; content: string }[]; model?: string; requestId?: string }): Promise<{ text: string; requestId?: string }> {
+  async chat(request: {
+    prompt: string
+    history?: { role: 'user' | 'assistant' | 'system'; content: string }[]
+    model?: string
+    requestId?: string
+  }): Promise<{ text: string; requestId?: string; confidence?: number }> {
     const provider = this.registry.resolve((request.provider as ProviderName) || (request.model as ProviderName) || this.defaultProvider)
     const response = await provider.chat({ prompt: request.prompt, history: request.history, model: request.model, requestId: request.requestId })
-    return { text: response.text, requestId: response.requestId }
+    return { text: response.text, requestId: response.requestId, confidence: (response as any).confidence }
   }
 
   async embed(request: { text: string; model?: string }): Promise<{ vector: number[] }> {
