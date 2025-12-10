@@ -1,4 +1,5 @@
 import type { Logger } from '../types'
+import type { ChannelAdapter, ChannelCapabilities, ChannelInboundMessage, ChannelOutboundMessage, ChannelSendContext } from '../channels'
 
 export interface PluginSettingsSchema {
   id: string
@@ -59,12 +60,14 @@ export interface PluginTriggerDefinition {
   subscribe(ctx: PluginTriggerContext): Promise<void> | void
 }
 
-export interface ChannelAdapterDefinition {
+export interface ChannelAdapterDefinition extends Partial<ChannelAdapter> {
   channel: string
-  validatePayload?(payload: any): { ok: boolean; issues?: string[] }
-  sendMessage(
-    ctx: PluginActionContext,
-    payload: Record<string, any>
+  displayName?: string
+  capabilities?: ChannelCapabilities
+  normalizeInbound(payload: any): Promise<ChannelInboundMessage> | ChannelInboundMessage
+  sendMessage?(
+    ctx: PluginActionContext & ChannelSendContext,
+    payload: ChannelOutboundMessage,
   ): Promise<{ ok: boolean; providerMessageId?: string; error?: string }>
 }
 

@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from 'pg'
 import { v4 as uuidv4 } from 'uuid'
-import { ChatMessage, Sender, StorageAdapter, StoredFile } from './types'
+import { ChannelMapping, ChannelMessageReceipt, ChatMessage, Sender, StorageAdapter, StoredFile } from './types'
 
 function nowIso() {
   return new Date().toISOString()
@@ -43,6 +43,25 @@ export class PostgresStorage implements StorageAdapter {
         storage_path text not null,
         created_at timestamptz not null default now()
       );
+      create table if not exists channel_mappings (
+        id bigserial primary key,
+        channel text not null,
+        external_user_id text not null,
+        session_id text not null references conversations(session_id) on delete cascade,
+        metadata jsonb,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now(),
+        unique(channel, external_user_id)
+      );
+      create table if not exists channel_message_receipts (
+        id bigserial primary key,
+        channel text not null,
+        external_user_id text not null,
+        session_id text not null references conversations(session_id) on delete cascade,
+        provider_message_id text,
+        created_at timestamptz not null default now(),
+        unique(channel, provider_message_id)
+      );
     `)
   }
 
@@ -54,6 +73,18 @@ export class PostgresStorage implements StorageAdapter {
       [sessionId],
     )
     return rows[0]?.session_id
+  }
+
+  private mapChannelRow(row: any): ChannelMapping {
+    return {
+      id: String(row.id),
+      channel: row.channel,
+      externalUserId: row.external_user_id,
+      sessionId: row.session_id,
+      metadata: row.metadata || undefined,
+      createdAt: row.created_at?.toISOString?.() || row.created_at,
+      updatedAt: row.updated_at?.toISOString?.() || row.updated_at,
+    }
   }
 
   async recordMessage(sessionId: string, sender: Sender, text: string, maxHistory: number): Promise<ChatMessage> {
@@ -152,5 +183,112 @@ export class PostgresStorage implements StorageAdapter {
     if (retentionDays <= 0) return
     await this.pool.query('delete from chat_messages where created_at < now() - ($1 || \" days\")::interval', [retentionDays])
     await this.pool.query('delete from chat_files where created_at < now() - ($1 || \" days\")::interval', [retentionDays])
+  }
+
+  async linkChannelConversation(input: {
+    channel: string
+    externalUserId: string
+    sessionIdHint?: string
+    metadata?: Record<string, any>
+  }): Promise<{ mapping: ChannelMapping; created: boolean }> {
+    await this.init()
+    const client = await this.pool.connect()
+    try {
+      await client.query('begin')
+      const existing = await client.query(
+        'select * from channel_mappings where channel=$1 and external_user_id=$2',
+        [input.channel, input.externalUserId],
+      )
+      if (existing.rows.length) {
+        const mergedMeta = { ...(existing.rows[0].metadata || {}), ...(input.metadata || {}) }
+        const { rows } = await client.query(
+          `update channel_mappings set session_id=$3, metadata=$4, updated_at=now() where channel=$1 and external_user_id=$2 returning *`,
+          [input.channel, input.externalUserId, existing.rows[0].session_id, mergedMeta],
+        )
+        await client.query('commit')
+        const fallback =
+          rows[0] ||
+          ({
+            id: uuidv4(),
+            channel: input.channel,
+            external_user_id: input.externalUserId,
+            session_id: existing.rows[0].session_id,
+            metadata: mergedMeta,
+            created_at: nowIso(),
+            updated_at: nowIso(),
+          } as any)
+        return { mapping: this.mapChannelRow(fallback), created: false }
+      }
+      const sessionId = input.sessionIdHint || uuidv4()
+      await this.ensureConversation(sessionId)
+      const { rows } = await client.query(
+        `insert into channel_mappings(channel, external_user_id, session_id, metadata)
+         values ($1,$2,$3,$4) returning *`,
+        [input.channel, input.externalUserId, sessionId, input.metadata || null],
+      )
+      await client.query('commit')
+      const inserted =
+        rows[0] ||
+        ({
+          id: uuidv4(),
+          channel: input.channel,
+          external_user_id: input.externalUserId,
+          session_id: sessionId,
+          metadata: input.metadata,
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        } as any)
+      return { mapping: this.mapChannelRow(inserted), created: true }
+    } catch (e) {
+      await client.query('rollback')
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+
+  async getChannelMapping(channel: string, externalUserId: string): Promise<ChannelMapping | null> {
+    await this.init()
+    const { rows } = await this.pool.query('select * from channel_mappings where channel=$1 and external_user_id=$2', [
+      channel,
+      externalUserId,
+    ])
+    return rows[0] ? this.mapChannelRow(rows[0]) : null
+  }
+
+  async recordChannelMessageReceipt(entry: {
+    channel: string
+    externalUserId: string
+    sessionId: string
+    providerMessageId?: string
+  }): Promise<ChannelMessageReceipt> {
+    await this.init()
+    const { rows } = await this.pool.query(
+      `insert into channel_message_receipts(channel, external_user_id, session_id, provider_message_id)
+       values ($1,$2,$3,$4)
+       on conflict (channel, provider_message_id) do nothing
+       returning *`,
+      [entry.channel, entry.externalUserId, entry.sessionId, entry.providerMessageId || null],
+    )
+    const duplicate = rows.length === 0 && !!entry.providerMessageId
+    const receiptRow =
+      rows[0] ||
+      ({
+        id: uuidv4(),
+        channel: entry.channel,
+        external_user_id: entry.externalUserId,
+        session_id: entry.sessionId,
+        provider_message_id: entry.providerMessageId || null,
+        created_at: nowIso(),
+      } as any)
+    return {
+      id: String(receiptRow?.id || uuidv4()),
+      channel: entry.channel,
+      externalUserId: entry.externalUserId,
+      sessionId: entry.sessionId,
+      providerMessageId: entry.providerMessageId || undefined,
+      createdAt: receiptRow?.created_at?.toISOString?.() || receiptRow?.created_at || nowIso(),
+      duplicate,
+    }
   }
 }

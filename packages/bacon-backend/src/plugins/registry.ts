@@ -5,15 +5,18 @@ import {
   PluginRuntimeOptions,
   PluginContextEnrichment,
 } from './types'
+import type { ChannelAdapter } from '../channels'
 
 export class PluginRegistry {
   private plugins: Map<string, PluginDefinition>
+  private channels: Map<string, ChannelAdapter>
   private auditSink?: (entry: PluginAuditLog) => void
   private logger?: PluginRuntimeOptions['logger']
   private secrets: PluginRuntimeOptions['secrets']
 
   constructor(opts: PluginRuntimeOptions = {}) {
     this.plugins = new Map()
+    this.channels = new Map()
     this.auditSink = opts.auditSink
     this.logger = opts.logger
     this.secrets = opts.secrets
@@ -22,6 +25,18 @@ export class PluginRegistry {
   register(def: PluginDefinition) {
     this.plugins.set(def.id, def)
     this.logger?.info?.(`[plugins] registered ${def.id}`)
+    if (def.channels) {
+      Object.values(def.channels).forEach((channel) => {
+        const adapter: ChannelAdapter = {
+          id: channel.channel,
+          displayName: channel.displayName || `${def.name} (${channel.channel})`,
+          capabilities: channel.capabilities || { inbound: true, outbound: !!channel.sendMessage },
+          normalizeInbound: channel.normalizeInbound.bind(channel),
+          send: channel.sendMessage ? channel.sendMessage.bind(channel) : channel.send,
+        }
+        this.channels.set(adapter.id.toLowerCase(), adapter)
+      })
+    }
   }
 
   all(): PluginDefinition[] {
@@ -30,6 +45,14 @@ export class PluginRegistry {
 
   get(id: string): PluginDefinition | undefined {
     return this.plugins.get(id)
+  }
+
+  listChannelAdapters(): ChannelAdapter[] {
+    return Array.from(this.channels.values())
+  }
+
+  getChannelAdapter(id: string): ChannelAdapter | undefined {
+    return this.channels.get(id.toLowerCase())
   }
 
   async invokeAction(
