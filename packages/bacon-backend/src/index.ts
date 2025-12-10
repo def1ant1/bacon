@@ -25,6 +25,8 @@ import jwt from 'jsonwebtoken'
 import { AuthService } from './auth'
 import { ChannelRouter, buildWebWidgetAdapter } from './channels'
 import { AutomationActionExecutor, AutomationRuleEngine } from './automation-rules'
+import { AnalyticsService } from './analytics'
+import { enforceNetworkControls, RateLimiter } from './security'
 
 const defaultSettings = {
   general: {
@@ -144,6 +146,16 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     defaultBrandId: config.brandId || 'default',
   })
   const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb, inbox)
+  const analytics = new AnalyticsService(storage, inbox)
+
+  const firewall = config.security
+    ? {
+        blocklist: config.security.blocklist ? new Set(config.security.blocklist) : undefined,
+        rateLimiter: config.security.rateLimit
+          ? new RateLimiter(config.security.rateLimit.windowMs ?? 60_000, config.security.rateLimit.max ?? 60)
+          : undefined,
+      }
+    : null
 
   let automation = config.automation?.engine
   if (!automation && config.automation?.rules?.length) {
@@ -300,6 +312,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
   const handler: BaconServer['handler'] = async (req, res, next) => {
     const url = new URL(req.url || '/', 'http://localhost')
+    if (!enforceNetworkControls(req, res, firewall)) return
     if (req.method === 'GET' && url.pathname === '/healthz') return sendJson(res, { ok: true })
     if (req.method === 'GET' && url.pathname === '/readyz') return sendJson(res, { ready: true })
 
@@ -345,6 +358,21 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     }
 
     if (url.pathname === '/api/admin/settings') return handleAdminSettings(req, res)
+
+    if (url.pathname === '/api/admin/analytics' && req.method === 'GET') {
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
+      const metric = (url.searchParams.get('metric') as any) || 'volume'
+      const page = Number(url.searchParams.get('page') || '1')
+      const pageSize = Number(url.searchParams.get('pageSize') || '50')
+      const payload = await analytics.query({
+        metric,
+        page,
+        pageSize,
+        timeStart: url.searchParams.get('timeStart') || undefined,
+        timeEnd: url.searchParams.get('timeEnd') || undefined,
+      })
+      return sendJson(res, payload)
+    }
 
     if (url.pathname === '/api/admin/auth/refresh' && req.method === 'POST') {
       if (!authService) return sendJson(res, { error: 'refresh_not_enabled' }, 400)
@@ -397,6 +425,24 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       }
       const msgs = await storage.listMessages(sessionId)
       return sendJson(res, msgs)
+    }
+
+    if (url.pathname === '/api/admin/compliance/export' && req.method === 'GET') {
+      if (!ensureAuth(req, 'admin').ok) return sendJson(res, { error: 'unauthorized' }, 401)
+      const sessionId = url.searchParams.get('sessionId') || ''
+      const messages = await storage.listMessages(sessionId)
+      const files = await storage.listFiles(sessionId)
+      logger.info('[audit] compliance_export', { sessionId, fileCount: files.length, messageCount: messages.length })
+      return sendJson(res, { sessionId, messages, files })
+    }
+
+    if (url.pathname === '/api/admin/compliance/delete' && req.method === 'DELETE') {
+      const actor = requireRole(req, res, 'admin')
+      if (!actor) return
+      const sessionId = url.searchParams.get('sessionId') || ''
+      await storage.clearSession(sessionId)
+      logger.info('[audit] compliance_delete', { actor: actor.userId || actor.role, sessionId })
+      return sendJson(res, { ok: true })
     }
 
     if (url.pathname === '/api/admin/inbox' && req.method === 'GET') {

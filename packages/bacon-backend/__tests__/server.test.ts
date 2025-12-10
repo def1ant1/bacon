@@ -11,6 +11,7 @@ function makeReq(method: string, url: string, body?: any) {
   stream.method = method
   stream.url = url
   stream.headers = { 'content-type': 'application/json' }
+  stream.socket = { remoteAddress: '127.0.0.1' }
   return stream
 }
 
