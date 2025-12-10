@@ -62,6 +62,8 @@
         { id: 'general', label: 'General' },
         { id: 'branding', label: 'Branding' },
         { id: 'behavior', label: 'Behavior' },
+        { id: 'transports', label: 'Transports' },
+        { id: 'plugins', label: 'Plugins' },
         { id: 'integrations', label: 'Integrations' },
         { id: 'ai', label: 'AI' },
         { id: 'vector', label: 'Vector DB' },
@@ -109,7 +111,7 @@
 
       function collectFromForm() {
         if (!settings) return
-        if (activeTab === 'general' || activeTab === 'branding' || activeTab === 'behavior' || activeTab === 'integrations' || activeTab === 'security' || activeTab==='export' || activeTab==='ai' || activeTab==='vector') {
+        if (activeTab === 'general' || activeTab === 'branding' || activeTab === 'behavior' || activeTab === 'integrations' || activeTab === 'security' || activeTab==='export' || activeTab==='ai' || activeTab==='vector' || activeTab==='transports' || activeTab==='plugins') {
           settings.general.title = val('set-title') || settings.general.title
           settings.general.defaultOpen = checked('set-defaultOpen')
           settings.general.welcomeMessage = val('set-welcomeMessage') || ''
@@ -120,14 +122,26 @@
           settings.branding.customCss = val('set-customCss') || ''
 
           settings.behavior.replyDelayMs = Number(val('set-replyDelayMs') || 0)
+          settings.behavior.retentionDays = Number(val('set-dataRetentionDays') || settings.behavior.retentionDays || 30)
 
           settings.integrations.apiUrl = val('set-apiUrl') || settings.integrations.apiUrl
           settings.integrations.apiAuthHeader = val('set-apiAuthHeader') || ''
           settings.integrations.webhookUrl = val('set-webhookUrl') || ''
 
-          settings.security.dataRetentionDays = Number(val('set-dataRetentionDays') || settings.security.dataRetentionDays)
           const allowed = val('set-allowedOrigins') || ''
           settings.security.allowedOrigins = allowed.split(/\n|,|\s+/).map(s=>s.trim()).filter(Boolean)
+
+          settings.transports = settings.transports || { default:'polling', allowPolling:true, allowWebSocket:true, pollIntervalMs:1500 }
+          settings.transports.default = val('set-transport-default') || settings.transports.default || 'polling'
+          settings.transports.allowPolling = checked('set-transport-polling')
+          settings.transports.allowWebSocket = checked('set-transport-ws')
+          settings.transports.pollIntervalMs = Number(val('set-pollIntervalMs') || settings.transports.pollIntervalMs || 1500)
+          settings.transports.webSocketPath = val('set-ws-path') || settings.transports.webSocketPath || '/api/chat/ws'
+
+          settings.plugins = settings.plugins || {}
+          settings.plugins.logging = checked('set-plugin-logging')
+          settings.plugins.tracing = checked('set-plugin-tracing')
+          settings.plugins.authTokenRefresher = checked('set-plugin-auth')
 
           // AI settings
           settings.ai = settings.ai || {}
@@ -199,6 +213,27 @@
         else if (activeTab === 'behavior') {
           panelEl.innerHTML = `
             <div class="row"><label>Reply Delay (ms)</label><input id="set-replyDelayMs" type="number" min="0" step="100" value="${Number(s.behavior.replyDelayMs)||0}"><div class="hint">Artificial delay to simulate typing</div></div>
+          `
+        }
+        else if (activeTab === 'transports') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Default Transport</label>
+              <select id="set-transport-default">
+                <option value="polling" ${s.transports?.default==='polling'?'selected':''}>HTTP polling</option>
+                <option value="websocket" ${s.transports?.default==='websocket'?'selected':''}>WebSocket</option>
+              </select>
+            </div>
+            <div class="row"><label>Allow HTTP Polling</label><div><input id="set-transport-polling" type="checkbox" ${s.transports?.allowPolling!==false?'checked':''}/> <span class="hint">Keeps /api/chat HTTP endpoints online</span></div></div>
+            <div class="row"><label>Allow WebSocket</label><div><input id="set-transport-ws" type="checkbox" ${s.transports?.allowWebSocket!==false?'checked':''}/> <span class="hint">Enables /api/chat/ws upgrades</span></div></div>
+            <div class="row"><label>Poll Interval (ms)</label><input id="set-pollIntervalMs" type="number" min="100" step="100" value="${Number(s.transports?.pollIntervalMs||1500)}"><div class="hint">Widget polling cadence</div></div>
+            <div class="row"><label>WebSocket Path</label><input id="set-ws-path" type="text" value="${esc(s.transports?.webSocketPath||'/api/chat/ws')}"><div class="hint">Relative path resolved against API URL</div></div>
+          `
+        }
+        else if (activeTab === 'plugins') {
+          panelEl.innerHTML = `
+            <div class="row"><label>Logging plugin</label><div><input id="set-plugin-logging" type="checkbox" ${s.plugins?.logging?'checked':''}/> Console + telemetry breadcrumbs</div></div>
+            <div class="row"><label>Tracing plugin</label><div><input id="set-plugin-tracing" type="checkbox" ${s.plugins?.tracing?'checked':''}/> Injects trace IDs into payload metadata</div></div>
+            <div class="row"><label>Auth refresh plugin</label><div><input id="set-plugin-auth" type="checkbox" ${s.plugins?.authTokenRefresher?'checked':''}/> Auto-refresh demo token on failures</div></div>
           `
         }
         else if (activeTab === 'integrations') {
@@ -354,7 +389,7 @@
         }
         else if (activeTab === 'security') {
           panelEl.innerHTML = `
-            <div class="row"><label>Data Retention (days)</label><input id="set-dataRetentionDays" type="number" min="1" step="1" value="${Number(s.security.dataRetentionDays)||30}"></div>
+            <div class="row"><label>Data Retention (days)</label><input id="set-dataRetentionDays" type="number" min="1" step="1" value="${Number(s.behavior?.retentionDays||30)}"><div class="hint">Applied to in-memory + Postgres adapters</div></div>
             <div class="row"><label>Allowed Origins</label><textarea id="set-allowedOrigins" rows="4" placeholder="* or one per line">${esc((s.security.allowedOrigins||[]).join('\n'))}</textarea><div class="hint">Not enforced in dev mock</div></div>
           `
         }

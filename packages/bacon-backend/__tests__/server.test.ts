@@ -64,7 +64,9 @@ describe('createBaconServer', () => {
       ws.on('open', () => ws.send(JSON.stringify({ sessionId: 'ws1', message: 'hi ws' })))
       ws.on('message', (data) => {
         const parsed = JSON.parse(String(data))
-        resolve(parsed.message.text)
+        if (Array.isArray(parsed)) {
+          resolve(parsed.map((m: any) => m.text || '').join('\n'))
+        }
       })
       ws.on('error', reject)
     })
