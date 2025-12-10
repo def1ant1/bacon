@@ -16,6 +16,8 @@ import {
   TransportOptions,
 } from "./transports/Transport";
 import { WebSocketTransport, WebSocketTransportOptions } from "./transports/WebSocketTransport";
+import { BaconPlugin, PluginRunner } from "./plugins/BaconPlugin";
+import { PluginProvider } from "./plugins/PluginProvider";
 
 /**
  * Represents who sent a given chat message.
@@ -32,6 +34,7 @@ export interface ChatMessage {
   createdAt: string; // ISO string for potential analytics / sorting
   fileUrl?: string;
   fileName?: string;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -41,6 +44,7 @@ export interface ChatMessage {
 export interface ChatApiRequest {
   sessionId: string;
   message: string;
+  metadata?: Record<string, unknown>;
   /**
    * Optional identifier to help backend look up CRM records.
    * Example: { email: "user@example.com" }.
@@ -120,6 +124,14 @@ export interface CustomerSupportChatWidgetProps {
    * here override the top-level props where applicable.
    */
   transportOptions?: Partial<PollingTransportOptions & WebSocketTransportOptions>;
+
+  /**
+   * Optional plugins that can extend the widget lifecycle with observability,
+   * retries, metadata injection, or UI analytics. Plugins are executed in
+   * array order with isolation guarantees and never mutate upstream objects in
+   * place.
+   */
+  plugins?: BaconPlugin[];
 }
 
 /**
@@ -171,6 +183,7 @@ export const CustomerSupportChatWidget: React.FC<
   welcomeMessage,
   transport = "polling",
   transportOptions,
+  plugins = [],
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -186,6 +199,49 @@ export const CustomerSupportChatWidget: React.FC<
   );
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pluginRunner = useMemo(
+    () =>
+      new PluginRunner(plugins, {
+        apiUrl,
+        sessionId: sessionId ?? null,
+        transportKind: typeof transport === "string" ? transport : "custom",
+        userIdentifier,
+        isOpen,
+      }),
+    [plugins],
+  );
+  const pluginContext = useMemo(
+    () => ({
+      apiUrl,
+      sessionId,
+      transportKind: typeof transport === "string" ? transport : "custom",
+      userIdentifier,
+      isOpen,
+    }),
+    [apiUrl, sessionId, transport, userIdentifier, isOpen],
+  );
+
+  useEffect(() => {
+    pluginRunner.updateContext({
+      apiUrl,
+      sessionId,
+      transportKind: typeof transport === "string" ? transport : "custom",
+      userIdentifier,
+      isOpen,
+    });
+  }, [pluginRunner, apiUrl, sessionId, transport, userIdentifier, isOpen]);
+
+  useEffect(() => {
+    void pluginRunner.init();
+    void pluginRunner.notifyMount();
+    return () => {
+      void pluginRunner.notifyUnmount();
+    };
+  }, [pluginRunner]);
+
+  useEffect(() => {
+    void pluginRunner.notifyOpen(isOpen);
+  }, [pluginRunner, isOpen]);
 
   /**
    * On mount, ensure we have a stable sessionId.
@@ -258,27 +314,35 @@ export const CustomerSupportChatWidget: React.FC<
 
     const instance = buildTransport();
     instance.setEventHandlers({
-      onOpen: () => setConnectionState("open"),
+      onOpen: () => {
+        setConnectionState("open");
+        void pluginRunner.notifyConnection({ state: "open" });
+      },
       onClose: (reason) => {
         setConnectionState("closed");
+        void pluginRunner.notifyConnection({ state: "closed", reason });
         if (reason) setError(`Connection closed: ${reason}`);
       },
       onError: (err) => {
         setConnectionState("error");
+        void pluginRunner.notifyConnection({ state: "error", reason: err.message });
         setError(err.message);
       },
-      onMessage: (incoming) => {
-        if (Array.isArray(incoming)) {
-          setMessages(incoming);
-        } else {
-          setMessages((prev) => [...prev, incoming]);
-        }
+      onMessage: async (incoming) => {
+        const list = Array.isArray(incoming) ? incoming : [incoming];
+        const processed = await pluginRunner.processMessages(list);
+        setMessages((prev) => {
+          if (Array.isArray(incoming)) return processed;
+          return [...prev, ...processed];
+        });
       },
       onTelemetry: (event) => {
         transportOverrides?.log?.("transport_event", event as any);
+        void pluginRunner.notifyTelemetry(event as any);
       },
     });
     void instance.connect();
+    void pluginRunner.notifyConnection({ state: "connecting" });
     setTransportInstance(instance);
 
     return () => {
@@ -297,6 +361,25 @@ export const CustomerSupportChatWidget: React.FC<
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, newMessage]);
+  };
+
+  const dispatchPayload = async (payload: ChatApiRequest): Promise<ChatApiResponse | void> => {
+    if (transportInstance) {
+      return transportInstance.send(payload);
+    }
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Chat API responded with status ${response.status}: ${response.statusText}`);
+    }
+
+    return (await response.json()) as ChatApiResponse;
   };
 
   /**
@@ -321,26 +404,7 @@ export const CustomerSupportChatWidget: React.FC<
         userIdentifier,
       };
 
-      let data: ChatApiResponse | void;
-      if (transportInstance) {
-        data = await transportInstance.send(payload);
-      } else {
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-          throw new Error(
-            `Chat API responded with status ${response.status}: ${response.statusText}`,
-          );
-        }
-
-        data = (await response.json()) as ChatApiResponse;
-      }
+      const data = await pluginRunner.send(payload, dispatchPayload);
 
       if (data?.reply) {
         // Add the bot's reply message when the transport returns it (polling).
@@ -434,116 +498,118 @@ export const CustomerSupportChatWidget: React.FC<
   };
 
   return (
-    <div
-      className="cs-chat-root"
-      style={{ ["--cs-primary" as any]: primaryColor } as React.CSSProperties}
-    >
-      {/* Floating launcher button */}
-      <button
-        type="button"
-        className="cs-chat-launcher"
-        onClick={() => setIsOpen((prev) => !prev)}
-        aria-label={isOpen ? "Close support chat" : "Open support chat"}
+    <PluginProvider plugins={plugins} context={pluginContext} runner={pluginRunner}>
+      <div
+        className="cs-chat-root"
+        style={{ ["--cs-primary" as any]: primaryColor } as React.CSSProperties}
       >
-        {/* Simple icon: chat bubble */}
-        <span className="cs-chat-launcher-icon" aria-hidden="true">
-          💬
-        </span>
-      </button>
+        {/* Floating launcher button */}
+        <button
+          type="button"
+          className="cs-chat-launcher"
+          onClick={() => setIsOpen((prev) => !prev)}
+          aria-label={isOpen ? "Close support chat" : "Open support chat"}
+        >
+          {/* Simple icon: chat bubble */}
+          <span className="cs-chat-launcher-icon" aria-hidden="true">
+            💬
+          </span>
+        </button>
 
-      {/* Chat panel */}
-      {isOpen && (
-        <div className="cs-chat-panel">
-          <div className="cs-chat-header">
-            <div className="cs-chat-header-main">
-              <div className="cs-chat-title">{title}</div>
-              <div className="cs-chat-subtitle">{renderSubtitle()}</div>
+        {/* Chat panel */}
+        {isOpen && (
+          <div className="cs-chat-panel">
+            <div className="cs-chat-header">
+              <div className="cs-chat-header-main">
+                <div className="cs-chat-title">{title}</div>
+                <div className="cs-chat-subtitle">{renderSubtitle()}</div>
+              </div>
+              <button
+                type="button"
+                className="cs-chat-header-close"
+                onClick={() => setIsOpen(false)}
+                aria-label="Close chat"
+              >
+                ✕
+              </button>
             </div>
-            <button
-              type="button"
-              className="cs-chat-header-close"
-              onClick={() => setIsOpen(false)}
-              aria-label="Close chat"
-            >
-              ✕
-            </button>
-          </div>
 
-          <div className="cs-chat-body">
-            {/* Optional error banner */}
-            {error && <div className="cs-chat-error">{error}</div>}
+            <div className="cs-chat-body">
+              {/* Optional error banner */}
+              {error && <div className="cs-chat-error">{error}</div>}
 
-            {/* Messages list */}
-            <div className="cs-chat-messages">
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`cs-chat-message cs-chat-message--${msg.sender}`}
-                >
-                  <div className="cs-chat-message-bubble">
-                    {msg.fileUrl ? (
-                      <a href={msg.fileUrl} target="_blank" rel="noreferrer">
-                        {msg.text || msg.fileName}
-                      </a>
-                    ) : (
-                      msg.text
-                    )}
+              {/* Messages list */}
+              <div className="cs-chat-messages">
+                {messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`cs-chat-message cs-chat-message--${msg.sender}`}
+                  >
+                    <div className="cs-chat-message-bubble">
+                      {msg.fileUrl ? (
+                        <a href={msg.fileUrl} target="_blank" rel="noreferrer">
+                          {msg.text || msg.fileName}
+                        </a>
+                      ) : (
+                        msg.text
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
 
-              {/* Typing indicator */}
-              {isLoading && (
-                <div className="cs-chat-message cs-chat-message--bot">
-                  <div className="cs-chat-message-bubble cs-chat-typing-indicator">
-                    <span className="cs-dot" />
-                    <span className="cs-dot" />
-                    <span className="cs-dot" />
+                {/* Typing indicator */}
+                {isLoading && (
+                  <div className="cs-chat-message cs-chat-message--bot">
+                    <div className="cs-chat-message-bubble cs-chat-typing-indicator">
+                      <span className="cs-dot" />
+                      <span className="cs-dot" />
+                      <span className="cs-dot" />
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              <div ref={messagesEndRef} />
+                <div ref={messagesEndRef} />
+              </div>
             </div>
-          </div>
 
-          <form className="cs-chat-input-row" onSubmit={handleSubmit}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="cs-chat-file-input"
-              aria-label="Attach file"
-              onChange={(e) => handleFileSelected(e.target.files?.[0] || null)}
-              style={{ display: "none" }}
-            />
-            <button
-              type="button"
-              className="cs-chat-attach-button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || !sessionId}
-              aria-label="Attach a file"
-              title="Attach a file"
-            >
-              📎
-            </button>
-            <input
-              type="text"
-              className="cs-chat-input"
-              placeholder="Type your message..."
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              disabled={isLoading || !sessionId}
-            />
-            <button
-              type="submit"
-              className="cs-chat-send-button"
-              disabled={isLoading || !sessionId || !inputText.trim()}
-            >
-              Send
-            </button>
-          </form>
-        </div>
-      )}
-    </div>
+            <form className="cs-chat-input-row" onSubmit={handleSubmit}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="cs-chat-file-input"
+                aria-label="Attach file"
+                onChange={(e) => handleFileSelected(e.target.files?.[0] || null)}
+                style={{ display: "none" }}
+              />
+              <button
+                type="button"
+                className="cs-chat-attach-button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || !sessionId}
+                aria-label="Attach a file"
+                title="Attach a file"
+              >
+                📎
+              </button>
+              <input
+                type="text"
+                className="cs-chat-input"
+                placeholder="Type your message..."
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                disabled={isLoading || !sessionId}
+              />
+              <button
+                type="submit"
+                className="cs-chat-send-button"
+                disabled={isLoading || !sessionId || !inputText.trim()}
+              >
+                Send
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
+    </PluginProvider>
   );
 };
