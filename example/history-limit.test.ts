@@ -20,7 +20,7 @@ describe('maxHistory limits', () => {
       await callApi(srv, 'POST', '/api/chat', { sessionId: 'mem-max', message: `hi ${i}` })
     }
     const msgs = await callApi(srv, 'GET', '/api/admin/messages?sessionId=mem-max')
-    expect(msgs.map((m: any) => m.text)).toEqual(['hi 1', 'Echo: hi 1', 'hi 2', 'Echo: hi 2'])
+    expect(msgs.map((m: any) => m.text)).toEqual(['hi 1', 'Echo: hi 1 [history:3]', 'hi 2', 'Echo: hi 2 [history:4]'])
   })
 
   it('supports postgres adapters', async () => {

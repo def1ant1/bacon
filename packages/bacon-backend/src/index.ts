@@ -16,6 +16,7 @@ import { buildGeminiFromEnv } from './ai/providers/gemini'
 import { buildLlamaFromEnv } from './ai/providers/llama'
 import { ProviderRouter } from './ai/provider-router'
 import { ProviderName } from './ai/providers/types'
+import { createKnowledgeBase, KnowledgeBaseService } from './kb/service'
 
 const defaultSettings = {
   general: {
@@ -99,9 +100,10 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       .catch((err) => logger.warn('[settings] async load failed', err))
   }
   const storage = config.storage || new MemoryStorage()
+  const kb: KnowledgeBaseService | undefined = config.kb === null ? undefined : createKnowledgeBase(logger)
   const registry = config.providerRegistry || buildProviderRegistry(logger)
   const ai = config.ai || new ProviderRouter(registry, settings.ai.provider as ProviderName)
-  const pipeline = new Pipeline(storage, ai, { ...config, settings })
+  const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb)
   const uploadsDir = config.fileHandling?.uploadsDir || path.join(process.cwd(), 'uploads')
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -234,6 +236,48 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
       const ok = health.every((h) => h.ok)
       config.metrics?.onHealthcheck?.(ok ? 'ok' : 'fail', { component: 'ai', health })
       return sendJson(res, { ok, health })
+    }
+
+    if (url.pathname === '/api/admin/kb/upload' && req.method === 'POST') {
+      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      if (!kb) return sendJson(res, { error: 'kb_unavailable' }, 503)
+      const bb = Busboy({ headers: req.headers })
+      let brandId = url.searchParams.get('brandId') || config.brandId || 'default'
+      let botId = url.searchParams.get('botId') || config.botId || 'default'
+      bb.on('field', (name, val) => {
+        if (name === 'brandId') brandId = val
+        if (name === 'botId') botId = val
+      })
+      let pending = 0
+      const results: any[] = []
+      bb.on('file', (name, file, info) => {
+        const buffers: Buffer[] = []
+        pending++
+        file.on('data', (d: Buffer) => buffers.push(d))
+        file.on('end', async () => {
+          try {
+            const response = await kb.ingestUpload({
+              brandId,
+              botId,
+              buffer: Buffer.concat(buffers),
+              filename: info.filename || name,
+              mimeType: info.mimeType,
+            })
+            results.push(response)
+          } catch (err) {
+            logger.error('[kb] ingest failed', err)
+            results.push({ error: (err as any)?.message || 'ingest_failed', filename: info.filename })
+          } finally {
+            pending--
+            if (pending === 0) sendJson(res, { ok: true, results })
+          }
+        })
+      })
+      bb.on('close', () => {
+        if (pending === 0) sendJson(res, { ok: true, results })
+      })
+      req.pipe(bb)
+      return
     }
 
     if (url.pathname === '/api/admin/clear' && req.method === 'POST') {
