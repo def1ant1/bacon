@@ -38,6 +38,18 @@ export interface AdminSettings {
     maxHistory: number
     retentionDays: number
   }
+  transports: {
+    default: 'polling' | 'websocket'
+    allowPolling: boolean
+    allowWebSocket: boolean
+    pollIntervalMs: number
+    webSocketPath?: string
+  }
+  plugins: {
+    logging: boolean
+    tracing: boolean
+    authTokenRefresher: boolean
+  }
   integrations: {
     apiUrl: string
     apiAuthHeader: string
@@ -94,6 +106,11 @@ export interface BaconServerConfig {
     enableHttpPolling?: boolean
     enableWebSocket?: boolean
     attachSocketIo?: (server: any, pipeline: MessagePipeline) => void
+  }
+  settingsStore?: {
+    load?(): Partial<AdminSettings>
+    save?(settings: AdminSettings): void
+    reset?(): Partial<AdminSettings>
   }
   logger?: Logger
   metrics?: MetricsHooks

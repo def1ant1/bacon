@@ -12,6 +12,6 @@
     "jsx": "react-jsx",
     "strict": true
   },
-  "include": ["src"]
+  "include": ["src", "backend", "vite.config.ts"]
 }
 

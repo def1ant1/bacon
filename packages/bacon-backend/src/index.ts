@@ -17,6 +17,14 @@ const defaultSettings = {
   },
   branding: { primaryColor: '#2563eb', customCss: '' },
   behavior: { replyDelayMs: 0, maxHistory: 200, retentionDays: 30 },
+  transports: {
+    default: 'polling' as const,
+    allowPolling: true,
+    allowWebSocket: true,
+    pollIntervalMs: 3000,
+    webSocketPath: '/api/chat/ws',
+  },
+  plugins: { logging: true, tracing: false, authTokenRefresher: false },
   integrations: { apiUrl: '/api/chat', apiAuthHeader: '', webhookUrl: '' },
   security: { allowedOrigins: ['*'] },
   ai: { provider: 'echo' as const, systemPrompt: 'You are a helpful customer support assistant.' },
@@ -28,12 +36,29 @@ function getLogger(logger?: Logger): Logger {
 }
 
 function validateSettings(settings: any) {
-  return { ...defaultSettings, ...(settings || {}) }
+  const merged = { ...defaultSettings, ...(settings || {}) }
+  merged.behavior.maxHistory = clampInt(merged.behavior.maxHistory, 10, 1000, 200)
+  merged.behavior.retentionDays = clampInt(merged.behavior.retentionDays, 1, 365, 30)
+  merged.transports.pollIntervalMs = clampInt(merged.transports.pollIntervalMs, 100, 60000, 3000)
+  merged.transports.default = merged.transports.default === 'websocket' ? 'websocket' : 'polling'
+  merged.transports.allowPolling = !!merged.transports.allowPolling
+  merged.transports.allowWebSocket = !!merged.transports.allowWebSocket
+  merged.plugins.logging = !!merged.plugins.logging
+  merged.plugins.tracing = !!merged.plugins.tracing
+  merged.plugins.authTokenRefresher = !!merged.plugins.authTokenRefresher
+  return merged
+}
+
+function clampInt(value: any, min: number, max: number, fallback: number) {
+  const num = Number.isFinite(value) ? Number(value) : Number.parseInt(value, 10)
+  if (Number.isNaN(num)) return fallback
+  return Math.min(Math.max(num, min), max)
 }
 
 export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   const logger = getLogger(config.logger)
-  const settings = validateSettings(config.settings)
+  const persisted = config.settingsStore?.load?.()
+  const settings = validateSettings(persisted || config.settings)
   const storage = config.storage || new MemoryStorage()
   const ai = config.ai || new EchoAiProvider()
   const pipeline = new Pipeline(storage, ai, { ...config, settings })
@@ -71,7 +96,9 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk as Buffer)
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-    Object.assign(settings, body)
+    const next = validateSettings({ ...settings, ...body })
+    Object.assign(settings, next)
+    config.settingsStore?.save?.(settings)
     sendJson(res, settings)
   }
 
@@ -110,12 +137,23 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     req.pipe(bb)
   }
 
+  const pollingEnabled = () => (config.transports?.enableHttpPolling ?? true) && settings.transports.allowPolling !== false
+  const websocketEnabled = () => (config.transports?.enableWebSocket ?? false) && settings.transports.allowWebSocket !== false
+
   const handler: BaconServer['handler'] = async (req, res, next) => {
     const url = new URL(req.url || '/', 'http://localhost')
     if (req.method === 'GET' && url.pathname === '/healthz') return sendJson(res, { ok: true })
     if (req.method === 'GET' && url.pathname === '/readyz') return sendJson(res, { ready: true })
 
+    if (req.method === 'GET' && url.pathname === '/api/chat') {
+      if (!pollingEnabled()) return sendJson(res, { error: 'http_polling_disabled' }, 404)
+      const sessionId = url.searchParams.get('sessionId') || 'dev-session'
+      const msgs = await pipeline.list(sessionId)
+      return sendJson(res, msgs)
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/chat') {
+      if (!pollingEnabled()) return sendJson(res, { error: 'http_polling_disabled' }, 404)
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(chunk as Buffer)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
@@ -123,6 +161,14 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     }
 
     if (url.pathname === '/api/admin/settings') return handleAdminSettings(req, res)
+
+    if (url.pathname === '/api/admin/settings/reset') {
+      if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
+      const resetTo = validateSettings(config.settingsStore?.reset?.() || config.settings)
+      Object.assign(settings, resetTo)
+      config.settingsStore?.save?.(settings)
+      return sendJson(res, settings)
+    }
 
     if (url.pathname === '/api/admin/sessions') {
       if (!ensureAuth(req)) return sendJson(res, { error: 'unauthorized' }, 401)
@@ -175,25 +221,25 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     config: { ...config, settings },
     mountToExpress(app: any) {
       app.use(handler)
-      if (config.transports?.enableWebSocket) {
+      if (websocketEnabled()) {
         const http = createHttpServer(app)
-        attachWs(http, pipeline, logger)
+        attachWs(http, pipeline, logger, websocketEnabled)
         return http
       }
     },
     mountToFastify(instance: any) {
       instance.use(handler)
-      if (config.transports?.enableWebSocket) {
+      if (websocketEnabled()) {
         const http = createHttpServer(instance)
-        attachWs(http, pipeline, logger)
+        attachWs(http, pipeline, logger, websocketEnabled)
         return http
       }
     },
   }
 
-  if (config.transports?.enableWebSocket) {
+  if (websocketEnabled()) {
     const http = createHttpServer(handler as any)
-    server.wss = attachWs(http, pipeline, logger)
+    server.wss = attachWs(http, pipeline, logger, websocketEnabled)
     // Keep HTTP server open only when consumer wants it; tests can listen manually
     ;(server as any)._httpServer = http
   }
@@ -202,16 +248,27 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   return server
 }
 
-function attachWs(http: any, pipeline: Pipeline, logger: Logger) {
+function attachWs(http: any, pipeline: Pipeline, logger: Logger, enabled: () => boolean) {
   const wss = new WebSocketServer({ server: http })
   wss.on('connection', (ws) => {
+    if (!enabled()) {
+      ws.close(1013, 'websocket_disabled')
+      return
+    }
+    ws.send(JSON.stringify({ type: 'welcome', transports: { websocket: true } }))
     ws.on('message', async (raw) => {
       try {
-        const payload = JSON.parse(String(raw))
-        const sessionId = payload.sessionId || 'ws-session'
-        const message = payload.message || ''
-        const reply = await pipeline.handleUserMessage(sessionId, message)
-        ws.send(JSON.stringify({ type: 'reply', message: reply }))
+        const payload = JSON.parse(String(raw) || '{}')
+        const messagePayload = payload.payload || payload
+        const sessionId = String(messagePayload.sessionId || payload.sessionId || 'ws-session')
+        const message = String(messagePayload.message || messagePayload.text || payload.message || '')
+        if (!message) {
+          ws.send(JSON.stringify({ type: 'error', error: 'missing_message' }))
+          return
+        }
+        await pipeline.handleUserMessage(sessionId, message)
+        const history = await pipeline.list(sessionId)
+        ws.send(JSON.stringify(history))
       } catch (e) {
         logger.error('ws error', e)
       }

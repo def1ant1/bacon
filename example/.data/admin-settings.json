@@ -2,7 +2,7 @@
   "general": {
     "title": "Support",
     "defaultOpen": true,
-    "welcomeMessage": "Hi! How can I help?",
+    "welcomeMessage": "Hi! How can I help? We automatically wire transports, plugins, and storage based on your environment.",
     "launcherPosition": "bottom-right"
   },
   "branding": {
@@ -11,7 +11,20 @@
   },
   "behavior": {
     "replyDelayMs": 0,
-    "maxHistory": 200
+    "maxHistory": 200,
+    "retentionDays": 30
+  },
+  "transports": {
+    "default": "polling",
+    "allowPolling": true,
+    "allowWebSocket": true,
+    "pollIntervalMs": 1500,
+    "webSocketPath": "/api/chat/ws"
+  },
+  "plugins": {
+    "logging": true,
+    "tracing": false,
+    "authTokenRefresher": false
   },
   "integrations": {
     "apiUrl": "/api/chat",
@@ -19,8 +32,7 @@
     "webhookUrl": ""
   },
   "security": {
-    "dataRetentionDays": 30,
-    "allowedOrigins": []
+    "allowedOrigins": ["*"]
   },
   "ai": {
     "provider": "echo",
