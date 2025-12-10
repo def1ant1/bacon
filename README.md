@@ -51,6 +51,7 @@ export default App;
 - pollIntervalMs?: number — Message poll interval for GET /api/chat?sessionId=... (default 3000, set 0 to disable). Kept for backward compatibility; see transport below.
 - transport?: "polling" | "websocket" | TransportFactory — Choose the transport implementation. Defaults to polling so existing installs continue working.
 - transportOptions?: Partial<PollingTransportOptions & WebSocketTransportOptions> — Advanced knobs (auth token injection, headers, heartbeat/ping-pong timing, backoff controls, socket.io factory, TLS-only websocket URL overrides).
+- plugins?: BaconPlugin[] — Optional lifecycle extensions for observability, auth refresh, message enrichment, or custom analytics.
 
 ## Transport configuration
 
@@ -84,6 +85,45 @@ Production hardening tips baked into the transports:
 - Heartbeats: `WebSocketTransport` pings periodically via JSON `{ type: "ping" }` to detect dead connections.
 - Auth: `transportOptions.authToken` and `transportOptions.headers` apply to all requests/frames.
 - Backoff: both transports expose `backoffBaseMs`/`backoffMaxMs` to smooth reconnect storms.
+- Hooks: transports surface telemetry and lifecycle events into the plugin runner so observability plugins can stream connection health without coupling to UI state.
+
+## Plugins & enterprise extensibility
+
+`CustomerSupportChatWidget` accepts a `plugins` prop and exports a `BaconPlugin` interface plus a React-based `PluginProvider` for consumers who want to host plugins outside the widget tree. The runner enforces:
+
+- **Ordering:** hooks execute in array order so you can layer tracing → auth → logging consistently.
+- **Isolation:** each hook is wrapped in try/catch; failures are logged and never block the widget or other plugins.
+- **Immutability:** payloads and messages are deep-cloned between plugins. To modify data, return a new payload/message list instead of mutating arguments.
+- **Safety:** send hooks can short-circuit (cached response), retry on recoverable errors, or abort a send entirely. Retries are capped to prevent infinite loops.
+
+Core hooks:
+
+- `onBeforeSend(payload)` → optionally return `{ payload, response?, abort? }`.
+- `onAfterSend(payload, response)`.
+- `onSendError(error, payload)` → optionally `{ retry: true, waitMs?, payload? }`.
+- `onMessages(messages)` → optionally `{ messages }` for enrichment or analytics tagging.
+- `onConnectionEvent({ state, reason? })` and `onTelemetry(event)` for transport observability.
+- `onWidgetOpen/Close`, `onWidgetMount/Unmount`, and `onInit` for UI lifecycle instrumentation.
+
+Built-in examples live in `src/plugins/examples.ts`:
+
+- **Logging**: emits structured lifecycle and telemetry events to your logger.
+- **Tracing**: injects trace IDs + timestamps into outbound payload metadata and echos them back on messages.
+- **Auth token refresher**: fetches tokens lazily and retries sends after refresh when a 401-like error is detected.
+
+Example usage:
+
+```tsx
+import { CustomerSupportChatWidget, createLoggingPlugin, createTracingPlugin } from "customer-support-chat-widget";
+
+<CustomerSupportChatWidget
+  apiUrl="/api/chat"
+  plugins={[
+    createTracingPlugin(),
+    createLoggingPlugin({ log: (event, detail) => myAnalytics.emit(event, detail) }),
+  ]}
+/>;
+```
 - Rate limits: keep `pollIntervalMs` reasonable (>= 1-3s) and adjust backoff for surge control.
 
 ## Theming
@@ -104,6 +144,7 @@ The widget sends:
 {
   "sessionId": "string",
   "message": "string",
+  "metadata": { "optional": "observability + custom fields" },
   "userIdentifier": {
     "email": "optional",
     "phone": "optional"
