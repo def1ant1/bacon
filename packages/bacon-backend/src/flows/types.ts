@@ -7,6 +7,7 @@ export type FlowNodeType =
   | 'escalate_to_agent'
   | 'crm_lookup'
   | 'shopify_order_lookup'
+  | 'plugin_action'
   | 'end'
 
 export interface FlowNode<TConfig = any> {
@@ -61,6 +62,13 @@ export interface FlowExecutionContext {
   vars: Record<string, any>
   botId: string
   abortSignal?: AbortSignal
+  plugins?: {
+    invokeAction: (
+      pluginId: string,
+      actionName: string,
+      input: Record<string, any>
+    ) => Promise<{ ok: boolean; data?: any }>
+  }
 }
 
 export interface NodeExecutionResult {
