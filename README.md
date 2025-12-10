@@ -220,3 +220,11 @@ curl -X POST http://localhost:5173/api/admin/db/init
 
 MIT
 
+
+## Operations & automation quickstart
+
+- **Container**: `docker build -t bacon-backend .` then `docker run -p 3001:3001 --env-file .env.example bacon-backend`. The container runs the bundled backend via `packages/bacon-backend/dist/server.cjs` with `/healthz` baked in.
+- **Serverless**: Copy `ops/serverless.template.yml`, swap in your ECR image URI, and deploy with `serverless deploy --param="ecrImage=$ECR_IMAGE"` after building/pushing the Docker image.
+- **Environment validation**: `npm run env:check` fails fast in CI when `PORT`/`HOST` or optional secrets are missing. See `.env.example` for sane defaults.
+- **Quality gates**: CI runs lint + coverage via `npm run test:coverage` and fails if coverage dips below thresholds defined in `vitest.config.ts`.
+- **Health/observability**: `/healthz` and `/readyz` are served by the backend and the default logger emits structured timestamped entries suitable for log aggregation.
