@@ -118,6 +118,10 @@ export interface BaconServerConfig {
   kb?: { topK?: number }
   brandId?: string
   botId?: string
+  flows?: {
+    repository?: import('./flows/repository').FlowRepository
+    engine?: import('./flows/engine').FlowEngine
+  }
   transports?: {
     enableHttpPolling?: boolean
     enableWebSocket?: boolean
