@@ -101,6 +101,7 @@ Production hardening tips baked into the transports:
 - Set `AUTH_BEARER_TOKEN` or `AUTH_JWT_SECRET` + `AUTH_REFRESH_SECRET` in the backend environment to secure `/api/admin/*` routes.
 - Access tokens honor the JWT `role` (or configured `roleClaim`) to enforce **admin** vs **agent** permissions and can be refreshed via `POST /api/admin/auth/refresh`.
 - Refresh and access tokens support optional issuer/audience claims; operators can register `onRefresh`/`onRevoke` callbacks to plug into centralized audit pipelines.
+- Network controls: supply `security.blocklist` entries as IPv4/IPv6 strings; the server normalizes IPv6-mapped IPv4 addresses (e.g., `::ffff:10.0.0.9` → `10.0.0.9`) and honors the first `x-forwarded-for` hop so blocklists still apply when traffic arrives through load balancers.
 
 Core hooks:
 
