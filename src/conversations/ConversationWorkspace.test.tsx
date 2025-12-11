@@ -42,7 +42,17 @@ const baseConversation: ConversationSummary = {
 
 describe("ConversationWorkspace", () => {
   it("loads message history when a sidebar item is selected", async () => {
-    const histories = { c1: [{ id: "m1", conversationId: "c1", sender: "user", text: "hi", createdAt: new Date().toISOString() }] }
+    const histories: Record<string, ConversationMessage[]> = {
+      c1: [
+        {
+          id: "m1",
+          conversationId: "c1",
+          sender: "user",
+          text: "hi",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }
     const service = createConversationService([baseConversation])
     const messageService = createMessageService(histories)
 

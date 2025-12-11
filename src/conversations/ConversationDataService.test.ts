@@ -36,8 +36,7 @@ describe("ConversationDataService", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(createResponse(samplePage))
-    // @ts-expect-error allow test-specific fetch mock
-    global.fetch = fetchMock
+    ;(globalThis as any).fetch = fetchMock
 
     const service = new ConversationDataService({ baseUrl: "/api/conversations" })
 
@@ -57,8 +56,7 @@ describe("ConversationDataService", () => {
       .fn()
       .mockResolvedValueOnce(createResponse(samplePage, false, 500))
       .mockResolvedValueOnce(createResponse(samplePage))
-    // @ts-expect-error allow test-specific fetch mock
-    global.fetch = fetchMock
+    ;(globalThis as any).fetch = fetchMock
 
     const service = new ConversationDataService({ baseUrl: "/api/conversations", retryBackoffMs: 1 })
     const resultPromise = service.fetchPage()
@@ -74,8 +72,7 @@ describe("ConversationDataService", () => {
         signal?.addEventListener("abort", () => reject(new Error("Aborted")))
       }) as Promise<Response>
     })
-    // @ts-expect-error allow test-specific fetch mock
-    global.fetch = fetchMock
+    ;(globalThis as any).fetch = fetchMock
 
     const service = new ConversationDataService({ baseUrl: "/api/conversations" })
     const controller = new AbortController()

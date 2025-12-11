@@ -438,9 +438,9 @@ export const CustomerSupportChatWidget: React.FC<
       throw new Error("client identity not initialized");
     }
     const effectivePayload: ChatApiRequest = {
+      ...payload,
       clientId,
       sessionId,
-      ...payload,
     };
     if (transportInstance) {
       return transportInstance.send(effectivePayload);
