@@ -1,0 +1,31 @@
+# Builds the example frontend + admin UI and serves the static bundle. This
+# mirrors production deployments where the backend is a separate service.
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# Install workspace dependencies first to keep cached layers warm.
+COPY package*.json tsconfig.json tsup.config.ts ./
+COPY packages ./packages
+COPY src ./src
+COPY docs ./docs
+RUN npm ci
+RUN npm run build
+
+# Bring in the example app + lockfile and build it against the compiled widget.
+COPY example/package*.json example/tsconfig.json example/vite.config.ts example/index.html ./example/
+COPY example/public ./example/public
+COPY example/src ./example/src
+COPY example/backend ./example/backend
+COPY example/README.md ./example/README.md
+RUN npm ci --prefix example
+RUN npm --prefix example run build
+
+FROM node:20-alpine
+WORKDIR /srv/admin
+RUN apk add --no-cache wget && npm install -g serve
+
+# Only copy the built assets to keep the runtime image small.
+COPY --from=build /app/example/dist ./dist
+EXPOSE 4173
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD wget -qO- http://localhost:4173 || exit 1
+CMD ["serve", "-s", "dist", "-l", "4173"]

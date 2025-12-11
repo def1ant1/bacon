@@ -182,6 +182,37 @@ The backend should respond with:
   - Messages (table: chat_messages)
   - Files (table: chat_files)
 
+## Stack quickstart (Docker Compose)
+
+1. Copy the env contract: `cp .env.example .env` and tune secrets (JWT_SECRET, DATABASE_URL, REDIS_URL, ALLOWED_ORIGINS).
+2. Build + boot the full stack: `npm run stack:up` (or `make stack-up`). Healthchecks cover `/readyz` on the backend and the admin preview server.
+3. Optional Redis: `STACK_PROFILES=redis make stack-up` enables the cache service without touching the rest of the stack.
+4. Inspect: `npm run stack:ps` for container status, `npm run stack:logs` for tailing all logs, and `npm run stack:down` to reset volumes between CI runs.
+
+The compose file builds the backend from `Dockerfile` and the admin/frontend from `ops/Dockerfile.admin`, wiring Postgres with a persistent volume. Ports default to `3001` (API) and `4173` (admin/frontend preview).
+
+## Scaffold with the create-bacon-app CLI
+
+The package now exposes a `create-bacon-app` binary for cloning the stack into a new workspace with minimal manual steps:
+
+```bash
+npm run build && npx create-bacon-app --dir ./deployments/my-stack --name myco
+# Flags: --no-redis to skip the Redis profile, --force to overwrite existing files
+```
+
+Generated assets include:
+- `.env.example` with DATABASE_URL, REDIS_URL, JWT_SECRET, GROK_API_KEY, BASE_URL, ALLOWED_ORIGINS defaults
+- `docker-compose.yml` mirroring the reference stack
+- `frontend/next-app` with a Next.js widget host example and scripts/bootstrap.sh to install/build/compose up
+- `backend/config.ts` wiring Postgres/memory storage, auth tokens, and file uploads
+
+## Troubleshooting & scaling
+
+- If the admin UI fails healthchecks, run `docker compose logs admin` to surface Vite preview errors; rebuild with `npm run stack:up` after fixing.
+- Database authentication errors usually mean `DATABASE_URL` and `POSTGRES_PASSWORD` diverged; align them in `.env` before restarting.
+- Tighten CORS by setting `ALLOWED_ORIGINS` to hostnames only (no schemes) to avoid wildcard defaults in production.
+- Scale horizontally by adding replicas behind a load balancer; keep sticky sessions on when using WebSockets and enable the Redis profile for shared rate limits.
+
 ## Building
 
 ```bash

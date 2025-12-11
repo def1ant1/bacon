@@ -3,6 +3,7 @@
 ## Runtime profiles
 - **Docker**: builds the widget + backend into a single image and exposes port 3001 with baked-in `/healthz`/`/readyz` probes.
 - **Serverless container**: use `ops/serverless.template.yml` to deploy the container image to AWS Lambda via HTTP API.
+- **Compose stack**: `npm run stack:up` (or `make stack-up`) builds the backend + admin preview, Postgres, and optional Redis profile. Use `STACK_PROFILES=redis` when you want cache-backed flows.
 
 ## Environment validation
 Run `npm run env:check` locally and in CI. Required: `PORT`, `HOST`. Optional with defaults: `POSTGRES_URL` (falls back to in-memory), `BEARER_TOKEN` or `JWT_SECRET` for securing admin APIs, transport toggles for websocket/polling.

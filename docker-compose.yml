@@ -1,17 +1,89 @@
-version: '3.8'
+version: '3.9'
 
+# Opinionated reference stack that mirrors the example app and exercises the
+# backend + admin UI end-to-end. Redis is optional via the `redis` profile.
 services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-3001}
+      HOST: 0.0.0.0
+      BASE_URL: ${BASE_URL:-http://localhost:3001}
+      DATABASE_URL: ${DATABASE_URL:-postgres://bacon:changeme@db:5432/bacon}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_SECRET: ${JWT_SECRET:-please-change-me}
+      BEARER_TOKEN: ${BEARER_TOKEN:-}
+      GROK_API_KEY: ${GROK_API_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-localhost:4173,localhost:5173}
+      ENABLE_WEBSOCKET: ${ENABLE_WEBSOCKET:-true}
+      ENABLE_HTTP_POLLING: ${ENABLE_HTTP_POLLING:-true}
+    ports:
+      - "${PORT:-3001}:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/readyz"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  admin:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile.admin
+    env_file:
+      - .env
+    environment:
+      BACKEND_BASE_URL: ${BASE_URL:-http://backend:3001}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${ADMIN_PORT:-4173}:4173"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4173"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   db:
     image: postgres:16-alpine
-    container_name: chatbot1-pg
+    container_name: bacon-pg
+    environment:
+      POSTGRES_USER: bacon
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: bacon
     ports:
       - "5432:5432"
-    environment:
-      POSTGRES_PASSWORD: chatpass
-      POSTGRES_DB: chatbot1
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bacon-redis
+    profiles: ["redis"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   pgdata:
-
