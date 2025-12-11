@@ -145,6 +145,13 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
   })
   const pipeline = new Pipeline(storage, ai, { ...config, settings }, kb, inbox)
 
+  const trustProxy = config.networkControls?.trustProxy !== false
+  const blocklistedAddresses = new Set(
+    (config.networkControls?.blocklist || [])
+      .map((addr) => normalizeIp(addr))
+      .filter((addr): addr is string => !!addr),
+  )
+
   let automation = config.automation?.engine
   if (!automation && config.automation?.rules?.length) {
     const executor: AutomationActionExecutor = {
@@ -238,6 +245,53 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
     res.end(JSON.stringify(payload))
   }
 
+  /**
+   * Normalize IPv6-mapped IPv4 addresses (e.g., ::ffff:10.0.0.9) and trim any
+   * noisy proxy-provided comma-separated lists to the leftmost hop so our
+   * comparisons are stable regardless of listener mode or proxy topology.
+   */
+  function normalizeIp(address?: string | null): string | null {
+    if (!address) return null
+    const first = address.split(',')[0]?.trim()
+    if (!first) return null
+    if (first.startsWith('::ffff:')) return first.slice('::ffff:'.length)
+    if (first === '::1') return '127.0.0.1'
+    return first
+  }
+
+  /**
+   * Capture both the raw socket address and the forwarded header (when allowed)
+   * so operators can run the firewall whether they deploy directly or behind a
+   * load balancer. We intentionally keep both values for observability.
+   */
+  function extractClientAddresses(req: any) {
+    const xff = req.headers?.['x-forwarded-for']
+    const forwarded = trustProxy
+      ? normalizeIp(Array.isArray(xff) ? xff[0] : typeof xff === 'string' ? xff : undefined)
+      : null
+    const socket = normalizeIp((req.socket as any)?.remoteAddress || (req.connection as any)?.remoteAddress)
+    return { forwarded, socket }
+  }
+
+  /**
+   * Simple network firewall: drop early with a 403 when the caller is block
+   * listed. We log both the normalized address and the raw sources to aid in
+   * SOC/audit investigations without relying on later middleware.
+   */
+  function enforceNetworkControls(req: any, res: any) {
+    if (!blocklistedAddresses.size) return true
+    const addresses = extractClientAddresses(req)
+    const blocked = [addresses.forwarded, addresses.socket].find((addr) =>
+      addr ? blocklistedAddresses.has(addr) : false,
+    )
+    if (blocked) {
+      logger.warn('[network] blocked request', { ...addresses, blocked })
+      sendJson(res, { error: 'forbidden' }, 403)
+      return false
+    }
+    return true
+  }
+
   async function handleChat(body: any, res: any) {
     try {
       const result = await channelRouter.ingest('web', body)
@@ -300,6 +354,7 @@ export function createBaconServer(config: BaconServerConfig = {}): BaconServer {
 
   const handler: BaconServer['handler'] = async (req, res, next) => {
     const url = new URL(req.url || '/', 'http://localhost')
+    if (!enforceNetworkControls(req, res)) return
     if (req.method === 'GET' && url.pathname === '/healthz') return sendJson(res, { ok: true })
     if (req.method === 'GET' && url.pathname === '/readyz') return sendJson(res, { ready: true })
 

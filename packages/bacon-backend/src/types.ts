@@ -280,6 +280,21 @@ export interface BaconServerConfig {
     queue?: InboxQueueAdapter
     notifier?: any
   }
+  networkControls?: {
+    /**
+     * IP addresses that should always receive a 403. Entries are normalized to
+     * plain IPv4 when possible so operators can paste the exact addresses
+     * surfaced by their logs without worrying about IPv6-mapped formatting.
+     */
+    blocklist?: string[]
+    /**
+     * Whether to honor the first X-Forwarded-For hop when deriving the client
+     * address. Leave enabled in most production deployments where a load
+     * balancer or reverse proxy terminates TLS before forwarding traffic to
+     * the Node process.
+     */
+    trustProxy?: boolean
+  }
   plugins?: {
     registry?: import('./plugins/registry').PluginRegistry
   }

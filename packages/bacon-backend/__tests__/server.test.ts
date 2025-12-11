@@ -105,4 +105,14 @@ describe('createBaconServer', () => {
     ws.close()
     http.close()
   })
+
+  it('blocks ipv6-mapped ipv4 callers that match the blocklist', async () => {
+    const srv = createBaconServer({ networkControls: { blocklist: ['10.0.0.9'] } }) as any
+    const req = makeReq('GET', '/api/admin/messages?sessionId=blocked')
+    req.socket = { remoteAddress: '::ffff:10.0.0.9' }
+    const res: any = makeRes()
+    await srv.handler(req, res, () => {})
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body)).toEqual({ error: 'forbidden' })
+  })
 })

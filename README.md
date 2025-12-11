@@ -234,3 +234,4 @@ MIT
 - **Environment validation**: `npm run env:check` fails fast in CI when `PORT`/`HOST` or optional secrets are missing. See `.env.example` for sane defaults.
 - **Quality gates**: CI runs lint + coverage via `npm run test:coverage` and fails if coverage dips below thresholds defined in `vitest.config.ts`.
 - **Health/observability**: `/healthz` and `/readyz` are served by the backend and the default logger emits structured timestamped entries suitable for log aggregation.
+- **Network controls**: The backend accepts a `networkControls.blocklist` array when constructing `createBaconServer(...)`. Addresses are normalized (e.g., `::ffff:10.0.0.9` → `10.0.0.9`) and, by default, the first `x-forwarded-for` hop is honored so IPv4 clients behind IPv6 listeners are still blocked appropriately.
