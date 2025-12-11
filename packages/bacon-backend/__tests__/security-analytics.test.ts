@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { createBaconServer, MemoryStorage } from '../src'
 import { Readable } from 'node:stream'
 
-function makeReq(method: string, url: string, body?: any, ip = '10.0.0.1') {
+function makeReq(
+  method: string,
+  url: string,
+  body?: any,
+  ip = '10.0.0.1',
+  headers: Record<string, string> = { 'content-type': 'application/json' }
+) {
   const payload = body !== undefined ? Buffer.from(JSON.stringify(body)) : undefined
   const stream: any = payload ? Readable.from([payload]) : Readable.from([])
   stream.method = method
   stream.url = url
-  stream.headers = { 'content-type': 'application/json' }
+  stream.headers = headers
   stream.socket = { remoteAddress: ip }
   return stream
 }
@@ -29,8 +35,14 @@ function makeRes() {
   }
 }
 
-async function call(server: any, method: string, url: string, body?: any, ip?: string) {
-  const req = makeReq(method, url, body, ip)
+async function call(
+  server: any,
+  method: string,
+  url: string,
+  body?: any,
+  opts?: { ip?: string; headers?: Record<string, string> }
+) {
+  const req = makeReq(method, url, body, opts?.ip, opts?.headers)
   const res: any = makeRes()
   await server.handler(req, res, () => {})
   const txt = res.body
@@ -39,13 +51,22 @@ async function call(server: any, method: string, url: string, body?: any, ip?: s
 
 describe('security + analytics hardening', () => {
   it('enforces rate limiting and blocklists', async () => {
-    const srv = createBaconServer({ security: { rateLimit: { windowMs: 10_000, max: 1 }, blocklist: ['10.0.0.9'] } })
-    const first = await call(srv, 'GET', '/healthz', undefined, '10.0.0.1')
+    const srv = createBaconServer({
+      security: { rateLimit: { windowMs: 10_000, max: 1 }, blocklist: ['10.0.0.9', '203.0.113.8'] },
+    })
+    const first = await call(srv, 'GET', '/healthz')
     expect(first.res.statusCode).toBe(200)
-    const second = await call(srv, 'GET', '/healthz', undefined, '10.0.0.1')
+    const second = await call(srv, 'GET', '/healthz')
     expect(second.res.statusCode).toBe(429)
-    const blocked = await call(srv, 'GET', '/healthz', undefined, '10.0.0.9')
-    expect(blocked.res.statusCode).toBe(403)
+    const blockedIpv4 = await call(srv, 'GET', '/healthz', undefined, { ip: '10.0.0.9' })
+    expect(blockedIpv4.res.statusCode).toBe(403)
+    const blockedMapped = await call(srv, 'GET', '/healthz', undefined, { ip: '::ffff:10.0.0.9' })
+    expect(blockedMapped.res.statusCode).toBe(403)
+    const forwardedBlocked = await call(srv, 'GET', '/healthz', undefined, {
+      ip: '::1',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.8, 70.0.0.2' },
+    })
+    expect(forwardedBlocked.res.statusCode).toBe(403)
   })
 
   it('masks PII and exposes analytics aggregates', async () => {
