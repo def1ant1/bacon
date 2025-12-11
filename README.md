@@ -133,6 +133,39 @@ import { CustomerSupportChatWidget, createLoggingPlugin, createTracingPlugin } f
 ```
 - Rate limits: keep `pollIntervalMs` reasonable (>= 1-3s) and adjust backoff for surge control.
 
+## Agent conversation workspace
+
+The inbox experience for support agents now ships as a pre-wired layout that links the `ConversationSidebar` to a central router + history view.
+
+- `ConversationWorkspace` wraps the sidebar, router, and main message window. When an agent clicks a row, the shared router sets the active conversation ID and hydrates the message history via `ConversationMessageService`.
+- `ConversationWindow` renders history with virtualization (powered by `@tanstack/react-virtual`) to keep 10k+ message threads smooth while preserving scroll position and unread tracking.
+- Error handling is centralized: failed history loads surface an inline alert with a retry CTA, and retries are debounced to avoid API thrash.
+
+### Minimal usage
+
+```tsx
+import { ConversationWorkspace, ConversationDataService, ConversationMessageService } from "customer-support-chat-widget"
+
+const conversationService = new ConversationDataService({ baseUrl: "/api/admin/inbox" })
+const messageService = new ConversationMessageService({ historyUrl: "/api/admin/messages", sendUrl: "/api/chat" })
+
+export function AgentInbox() {
+  return (
+    <ConversationWorkspace
+      conversationService={conversationService}
+      messageService={messageService}
+      sidebarTitle="Inbox"
+      title="Conversation"
+    />
+  )
+}
+```
+
+### Operator + developer flows
+
+- User journey: select any conversation from the inbox → router records the active ID → history fetch fires → virtualized list renders, pinning scroll to the bottom when the user is reading the latest message → sending a reply appends optimistically and marks the message as seen when the view is at the bottom.
+- Developer reproduction: run `npm test -- --runInBand src/conversations/ConversationWorkspace.test.tsx` to execute the full selection/send/reselect matrix; use `npm start` to launch the example app, then import `ConversationWorkspace` into any admin surface to validate end-to-end data flow.
+
 ## Theming
 
 - System-aware: honors prefers-color-scheme automatically.
