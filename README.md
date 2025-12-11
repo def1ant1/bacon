@@ -4,7 +4,8 @@ A simple, floating customer service chat widget for React + TypeScript.
 
 - Floating launcher button
 - Expandable chat panel
-- Session persistence via localStorage
+- Session persistence via localStorage plus a SameSite cookie so servers can
+  validate the client ID across fetch/WebSocket transports
 - Sends messages to a configurable backend /chat endpoint
 - System light/dark theme via CSS variables
 
@@ -182,6 +183,7 @@ export function AgentInbox() {
 The widget sends:
 ```json
 {
+  "clientId": "string",
   "sessionId": "string",
   "message": "string",
   "metadata": { "optional": "observability + custom fields" },
@@ -198,6 +200,21 @@ The backend should respond with:
   "reply": "string"
 }
 ```
+
+## Client/session identity, rotation, and troubleshooting
+
+- The widget mints a privacy-safe UUID once per browser profile and stores it
+  in both `localStorage` and a SameSite=Lax cookie (`cs_client_id`). This keeps
+  the ID stable across tabs and transport types so your backend can validate it
+  with headers (`X-Client-Id`) or WebSocket query params.
+- IDs expire after ~180 days. The widget refreshes proactively (every TTL/4)
+  and will rotate immediately if the stored record is corrupted or removed.
+- Operators can trigger a manual reset by clearing the cookie + localStorage
+  entry or by responding with a 4xx that instructs the hosting app to call the
+  `clientIdentityManager.rotateIdentity` helper.
+- If you see mismatched IDs between fetch and WebSocket frames, check for
+  third-party cookie blockers or strict CSP. The cookie path is `/` and
+  intentionally avoids user data to stay privacy-compliant.
 
 ### Conversation sidebar + inbox API
 

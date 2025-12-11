@@ -62,13 +62,14 @@ describe("WebSocketTransport", () => {
   it("flushes queued messages once the socket opens", async () => {
     const transport = new WebSocketTransport({
       apiUrl: "https://api.example.com/chat",
+      clientId: "client-123",
       sessionId: "s1",
       webSocketImpl: FakeWebSocket as any,
     });
     transport.setEventHandlers(handlers);
     await transport.connect();
     const socket = (transport as any).socket as FakeWebSocket;
-    await transport.send({ sessionId: "s1", message: "hello" });
+    await transport.send({ clientId: "client-123", sessionId: "s1", message: "hello" });
     expect(socket.sent).toHaveLength(0);
     socket.triggerOpen();
     expect(handlers.onOpen).toHaveBeenCalled();
@@ -78,6 +79,7 @@ describe("WebSocketTransport", () => {
   it("emits messages and schedules reconnects", async () => {
     const transport = new WebSocketTransport({
       apiUrl: "https://api.example.com/chat",
+      clientId: "client-123",
       sessionId: "s1",
       heartbeatMs: 0,
       webSocketImpl: FakeWebSocket as any,

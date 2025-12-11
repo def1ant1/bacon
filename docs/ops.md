@@ -13,6 +13,11 @@ Run `npm run env:check` locally and in CI. Required: `PORT`, `HOST`. Optional wi
 - `RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_MS` protect the admin/agent API surface with an in-memory token bucket. Pair with a CDN/WAF for production.
 - PII masking is applied to inbound chat text to redact emails/phone numbers before storage; avoid logging raw chat payloads downstream.
 
+### Client identity validation
+- Every widget now sends a stable `clientId` along with the existing `sessionId`. The ID is stored in both a SameSite cookie (`cs_client_id`) and `localStorage` and is also forwarded via `X-Client-Id` headers + WebSocket query params for server-side verification.
+- The ID auto-rotates every ~180 days (or sooner if corruption/clearing is detected). To force rotation from the server, respond with an auth-style 401/403 and instruct the hosting app to call `clientIdentityManager.rotateIdentity()` before retrying.
+- For environments with strict cookie policies, ensure the chat domain matches the app domain or add explicit allowlists so the SameSite cookie is delivered with fetch and websocket upgrades.
+
 ### Retention + compliance
 - Messages are trimmed by the retention sweep configured in settings (`behavior.retentionDays`) and run every 30 minutes by default.
 - `/api/admin/compliance/export` and `/api/admin/compliance/delete` provide GDPR-style export and erasure per session ID; enforce JWT/bearer auth upstream.

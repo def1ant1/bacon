@@ -89,6 +89,7 @@ export class WebSocketTransport implements Transport {
     const envelope = JSON.stringify({
       type: "message",
       sessionId: this.options.sessionId,
+      clientId: this.options.clientId,
       userIdentifier: this.options.userIdentifier,
       payload,
     });
@@ -111,6 +112,7 @@ export class WebSocketTransport implements Transport {
     const envelope = {
       type: "file",
       sessionId: this.options.sessionId,
+      clientId: this.options.clientId,
       metadata,
       name: file.name,
       size: file.size,
@@ -128,11 +130,17 @@ export class WebSocketTransport implements Transport {
   }
 
   private computeUrl() {
-    if (this.options.webSocketUrl) return this.options.webSocketUrl;
-    // Auto-derive from API URL: https://api.example.com/chat => wss://api.example.com/chat/ws
-    const parsed = new URL(this.options.apiUrl, typeof window !== "undefined" ? window.location.href : undefined);
-    parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
-    parsed.pathname = parsed.pathname.replace(/\/$/, "") + "/ws";
+    const parsed = new URL(
+      this.options.webSocketUrl || this.options.apiUrl,
+      typeof window !== "undefined" ? window.location.href : undefined,
+    );
+    if (!this.options.webSocketUrl) {
+      // Auto-derive from API URL: https://api.example.com/chat => wss://api.example.com/chat/ws
+      parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+      parsed.pathname = parsed.pathname.replace(/\/$/, "") + "/ws";
+    }
+    parsed.searchParams.set("sessionId", this.options.sessionId);
+    parsed.searchParams.set("clientId", this.options.clientId);
     return parsed.toString();
   }
 

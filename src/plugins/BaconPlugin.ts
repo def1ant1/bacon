@@ -9,6 +9,7 @@ import { ChatApiRequest, ChatApiResponse, ChatMessage } from "../CustomerSupport
  */
 export interface PluginRuntimeContext {
   readonly apiUrl: string;
+  readonly clientId: string | null;
   readonly sessionId: string | null;
   readonly transportKind: string;
   readonly userIdentifier?: Record<string, string>;
