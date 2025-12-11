@@ -8,6 +8,12 @@ import {
 
 vi.mock("../../CustomerSupportChatWidget.css", () => ({}));
 
+const formatUuid = (
+  label: string,
+  counter: number
+): `${string}-${string}-${string}-${string}-${string}` =>
+  `00000000-0000-0000-0000-${label}${String(counter).padStart(4, "0")}`;
+
 const clearCookie = () => {
   document.cookie = `${CLIENT_ID_COOKIE_NAME}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
 };
@@ -26,15 +32,15 @@ describe("ClientIdentityManager", () => {
     let counter = 0;
     const randomSpy = vi
       .spyOn(globalThis.crypto, "randomUUID")
-      .mockImplementation(() => `uuid-${++counter}`);
+      .mockImplementation(() => formatUuid("uuid", ++counter));
     const manager = new ClientIdentityManager(() => Date.now());
 
     const record = await manager.getOrCreateIdentity();
 
-    expect(record.id).toBe("uuid-1");
+    expect(record.id).toBe(formatUuid("uuid", 1));
     expect(record.expiresAt - record.createdAt).toBe(CLIENT_ID_TTL_MS);
-    expect(localStorage.getItem(CLIENT_ID_STORAGE_KEY)).toContain("uuid-1");
-    expect(document.cookie).toContain(`${CLIENT_ID_COOKIE_NAME}=uuid-1`);
+    expect(localStorage.getItem(CLIENT_ID_STORAGE_KEY)).toContain(formatUuid("uuid", 1));
+    expect(document.cookie).toContain(`${CLIENT_ID_COOKIE_NAME}=${formatUuid("uuid", 1)}`);
     randomSpy.mockRestore();
   });
 
@@ -57,26 +63,26 @@ describe("ClientIdentityManager", () => {
     const expired = { id: "expired", createdAt: 0, expiresAt: 1 };
     localStorage.setItem(CLIENT_ID_STORAGE_KEY, JSON.stringify(expired));
     let counter = 0;
-    vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => `next-${++counter}`);
+    vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => formatUuid("next", ++counter));
     const manager = new ClientIdentityManager(() => 10_000);
 
     const record = await manager.getOrCreateIdentity();
 
-    expect(record.id).toBe("next-1");
+    expect(record.id).toBe(formatUuid("next", 1));
     expect(record.id).not.toBe("expired");
   });
 
   it("allows manual rotation for server-directed resets", async () => {
     let counter = 0;
-    vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => `manual-${++counter}`);
+    vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => formatUuid("manual", ++counter));
     const manager = new ClientIdentityManager(() => 5_000);
     const first = await manager.getOrCreateIdentity();
 
     const rotated = await manager.rotateIdentity("server_rejected");
 
-    expect(rotated.id).toBe("manual-2");
+    expect(rotated.id).toBe(formatUuid("manual", 2));
     expect(rotated.id).not.toBe(first.id);
-    expect(localStorage.getItem(CLIENT_ID_STORAGE_KEY)).toContain("manual-2");
+    expect(localStorage.getItem(CLIENT_ID_STORAGE_KEY)).toContain(formatUuid("manual", 2));
   });
 
   it("rehydrates from cookie when storage is unavailable", async () => {

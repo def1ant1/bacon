@@ -22,3 +22,41 @@ Both transports expose consistent lifecycle states (`idle`, `connecting`, `open`
 - Enable TLS and WAF protections in production, with rate limiting at the edge.
 - Centralize logging/metrics and alert on transport errors or elevated reconnect rates.
 - Regularly run the CI suite to validate transports, plugins, and backend integrations before releasing.
+
+## Chat feed and session lifecycles
+
+```mermaid
+sequenceDiagram
+  participant Widget
+  participant Identity
+  participant Transport
+  participant Backend
+
+  Widget->>Identity: getOrCreateIdentity()
+  Identity-->>Widget: clientId + sessionId
+  Widget->>Transport: build(apiUrl, clientId, sessionId)
+  Transport-->>Widget: onOpen()
+  Transport->>Backend: fetch /chat?sessionId=clientId
+  Backend-->>Transport: seeded transcript
+  Transport-->>Widget: onMessage(history)
+  Widget-->>Widget: render list + welcome message if empty
+```
+
+```mermaid
+sequenceDiagram
+  participant AgentUI as Agent workspace
+  participant Router
+  participant MessageSvc as ConversationMessageService
+
+  AgentUI->>Router: selectConversation(conversationId)
+  Router->>MessageSvc: loadHistory(conversationId)
+  MessageSvc-->>Router: messages[] (debounced retries on failure)
+  Router-->>AgentUI: cached history + lastSeenId
+  AgentUI-->>AgentUI: virtualized render + unread tracking
+  AgentUI->>Router: sendMessage(text)
+  Router->>MessageSvc: sendMessage(conversationId, text)
+  MessageSvc-->>Router: appended message
+  Router-->>AgentUI: update cache & seen marker
+```
+
+The client identity manager stores the `clientId`/`sessionId` pairing in both `localStorage` and a SameSite cookie. On reconnects (tab restores, network blips) the widget rehydrates the values and threads them through every transport payload so backend CSRF/abuse controls remain intact even when transports switch from polling to WebSocket.
