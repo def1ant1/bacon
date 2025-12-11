@@ -2,7 +2,7 @@
 // A minimal-but-complete customer service chat widget in React + TypeScript.
 // - Floating launcher button
 // - Expandable chat panel
-// - Session persistence via localStorage
+// - Session persistence via localStorage + SameSite cookie for backend validation
 // - Calls a configurable backend chat API endpoint
 // - Simple message list with typing indicator and error handling
 
@@ -24,6 +24,11 @@ import {
   RichMessagePayload,
   RichMessageType,
 } from "./messages/registry";
+import {
+  clientIdentityManager,
+  CLIENT_ID_TTL_MS,
+  createClientId,
+} from "./auth/ClientIdentityManager";
 
 /**
  * Represents who sent a given chat message.
@@ -50,6 +55,12 @@ export interface ChatMessage {
  * Adjust this to match your backend contract.
  */
 export interface ChatApiRequest {
+  /**
+   * Stable, privacy-safe identifier persisted across tabs and sessions. The
+   * backend can validate this value via the accompanying cookie/header for
+   * additional CSRF/abuse protections.
+   */
+  clientId: string;
   sessionId: string;
   message: string;
   metadata?: Record<string, unknown>;
@@ -148,39 +159,6 @@ export interface CustomerSupportChatWidgetProps {
 }
 
 /**
- * Local storage key to persist the chat session ID across page loads.
- */
-const SESSION_STORAGE_KEY = "cs_chat_session_id_v1";
-
-/**
- * Simple helper to create a session ID.
- * Uses crypto.randomUUID when available, falls back to a timestamp-based ID.
- */
-function createSessionId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-/**
- * Retrieves or creates a persistent session ID stored in localStorage.
- */
-function getOrCreateSessionId(): string {
-  try {
-    const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
-    if (existing) return existing;
-
-    const newId = createSessionId();
-    window.localStorage.setItem(SESSION_STORAGE_KEY, newId);
-    return newId;
-  } catch {
-    // If localStorage fails (e.g., disabled), just return a fresh ID each time.
-    return createSessionId();
-  }
-}
-
-/**
  * Main customer support chat widget component.
  */
 export const CustomerSupportChatWidget: React.FC<
@@ -200,6 +178,7 @@ export const CustomerSupportChatWidget: React.FC<
   messageRegistry,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen);
+  const [clientId, setClientId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState<string>("");
@@ -221,6 +200,7 @@ export const CustomerSupportChatWidget: React.FC<
     () =>
       new PluginRunner(plugins, {
         apiUrl,
+        clientId: clientId ?? null,
         sessionId: sessionId ?? null,
         transportKind: typeof transport === "string" ? transport : "custom",
         userIdentifier,
@@ -231,23 +211,25 @@ export const CustomerSupportChatWidget: React.FC<
   const pluginContext = useMemo(
     () => ({
       apiUrl,
+      clientId,
       sessionId,
       transportKind: typeof transport === "string" ? transport : "custom",
       userIdentifier,
       isOpen,
     }),
-    [apiUrl, sessionId, transport, userIdentifier, isOpen],
+    [apiUrl, clientId, sessionId, transport, userIdentifier, isOpen],
   );
 
   useEffect(() => {
     pluginRunner.updateContext({
       apiUrl,
+      clientId,
       sessionId,
       transportKind: typeof transport === "string" ? transport : "custom",
       userIdentifier,
       isOpen,
     });
-  }, [pluginRunner, apiUrl, sessionId, transport, userIdentifier, isOpen]);
+  }, [pluginRunner, apiUrl, clientId, sessionId, transport, userIdentifier, isOpen]);
 
   useEffect(() => {
     void pluginRunner.init();
@@ -262,11 +244,41 @@ export const CustomerSupportChatWidget: React.FC<
   }, [pluginRunner, isOpen]);
 
   /**
-   * On mount, ensure we have a stable sessionId.
+   * Hydrate a durable, privacy-safe client identifier. The manager writes to
+   * both localStorage and SameSite cookies so the backend can validate the
+   * caller even when fetch and WebSocket upgrade paths differ. The interval
+   * proactively refreshes stale records (TTL/4) to avoid mid-conversation
+   * expiration without creating excessive churn.
    */
   useEffect(() => {
-    const id = getOrCreateSessionId();
-    setSessionId(id);
+    let canceled = false;
+
+    const hydrateIdentity = async () => {
+      try {
+        const record = await clientIdentityManager.getOrCreateIdentity();
+        if (canceled) return;
+        setClientId(record.id);
+        setSessionId(record.id);
+      } catch (err) {
+        console.warn("client identity bootstrap failed; falling back", err);
+        if (canceled) return;
+        const fallback = createClientId();
+        setClientId(fallback);
+        setSessionId(fallback);
+      }
+    };
+
+    void hydrateIdentity();
+    const refreshPeriod = Math.min(CLIENT_ID_TTL_MS / 4, 2147483647);
+    const interval =
+      typeof window !== "undefined"
+        ? window.setInterval(() => void hydrateIdentity(), refreshPeriod)
+        : undefined;
+
+    return () => {
+      canceled = true;
+      if (interval) window.clearInterval(interval);
+    };
   }, []);
 
   /**
@@ -276,10 +288,10 @@ export const CustomerSupportChatWidget: React.FC<
    */
   useEffect(() => {
     if (!welcomeMessage) return;
-    if (!sessionId) return;
+    if (!sessionId || !clientId) return;
     if (messages.length > 0) return;
     addMessage("bot", welcomeMessage);
-  }, [welcomeMessage, sessionId, messages.length]);
+  }, [welcomeMessage, sessionId, clientId, messages.length]);
 
   /**
    * Automatically scroll to the bottom when messages change.
@@ -298,9 +310,10 @@ export const CustomerSupportChatWidget: React.FC<
    * falls back to polling with the same defaults as before.
    */
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !clientId) return;
     const baseOptions: TransportOptions = {
       apiUrl,
+      clientId,
       sessionId,
       userIdentifier,
       uploadUrl,
@@ -366,7 +379,7 @@ export const CustomerSupportChatWidget: React.FC<
     return () => {
       void instance.disconnect("component_unmounted");
     };
-  }, [sessionId, apiUrl, userIdentifier, uploadUrl, pollIntervalMs, transport, transportOverrides]);
+  }, [sessionId, clientId, apiUrl, userIdentifier, uploadUrl, pollIntervalMs, transport, transportOverrides]);
 
   /**
    * Adds a message to local state.
@@ -383,7 +396,7 @@ export const CustomerSupportChatWidget: React.FC<
   };
 
   const sendText = async (raw: string) => {
-    if (!raw.trim() || !sessionId || isLoading) return;
+    if (!raw.trim() || !sessionId || !clientId || isLoading) return;
 
     const trimmed = raw.trim();
 
@@ -395,6 +408,7 @@ export const CustomerSupportChatWidget: React.FC<
 
     try {
       const payload: ChatApiRequest = {
+        clientId,
         sessionId,
         message: trimmed,
         userIdentifier,
@@ -420,15 +434,24 @@ export const CustomerSupportChatWidget: React.FC<
   };
 
   const dispatchPayload = async (payload: ChatApiRequest): Promise<ChatApiResponse | void> => {
+    if (!clientId || !sessionId) {
+      throw new Error("client identity not initialized");
+    }
+    const effectivePayload: ChatApiRequest = {
+      clientId,
+      sessionId,
+      ...payload,
+    };
     if (transportInstance) {
-      return transportInstance.send(payload);
+      return transportInstance.send(effectivePayload);
     }
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-Client-Id": clientId,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(effectivePayload),
     });
 
     if (!response.ok) {
@@ -443,13 +466,13 @@ export const CustomerSupportChatWidget: React.FC<
    */
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!inputText.trim() || !sessionId || isLoading) return;
+    if (!inputText.trim() || !sessionId || !clientId || isLoading) return;
     const pending = inputText;
     await sendText(pending);
   };
 
   const handleFileSelected = async (file: File | null) => {
-    if (!file || !sessionId) return;
+    if (!file || !sessionId || !clientId) return;
     setIsLoading(true);
     setError(null);
     try {
@@ -464,6 +487,7 @@ export const CustomerSupportChatWidget: React.FC<
       }
 
       const form = new FormData();
+      form.append("clientId", clientId);
       form.append("sessionId", sessionId);
       if (userIdentifier) {
         for (const [k, v] of Object.entries(userIdentifier)) {
@@ -606,7 +630,7 @@ export const CustomerSupportChatWidget: React.FC<
                 type="button"
                 className="cs-chat-attach-button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || !sessionId}
+                disabled={isLoading || !sessionId || !clientId}
                 aria-label="Attach a file"
                 title="Attach a file"
               >
@@ -618,12 +642,12 @@ export const CustomerSupportChatWidget: React.FC<
                 placeholder="Type your message..."
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                disabled={isLoading || !sessionId}
+                disabled={isLoading || !sessionId || !clientId}
               />
               <button
                 type="submit"
                 className="cs-chat-send-button"
-                disabled={isLoading || !sessionId || !inputText.trim()}
+                disabled={isLoading || !sessionId || !clientId || !inputText.trim()}
               >
                 Send
               </button>

@@ -66,6 +66,7 @@ export class PollingTransport implements Transport {
       "Content-Type": "application/json",
       ...this.options.headers,
     };
+    headers["X-Client-Id"] = this.options.clientId;
     if (this.options.authToken) {
       headers["Authorization"] = `Bearer ${this.options.authToken}`;
     }
@@ -91,6 +92,7 @@ export class PollingTransport implements Transport {
     metadata?: Record<string, string>,
   ): Promise<ChatMessage | undefined> {
     const form = new FormData();
+    form.append("clientId", this.options.clientId);
     form.append("sessionId", this.options.sessionId);
     if (metadata) {
       for (const [k, v] of Object.entries(metadata)) {
@@ -147,7 +149,7 @@ export class PollingTransport implements Transport {
       : this.options.apiUrl.replace(/\/$/, "") + "/chat";
     try {
       const res = await fetch(
-        `${messagesUrl}?sessionId=${encodeURIComponent(this.options.sessionId)}`,
+        `${messagesUrl}?sessionId=${encodeURIComponent(this.options.sessionId)}&clientId=${encodeURIComponent(this.options.clientId)}`,
         {
           signal: abort.signal,
           headers: this.buildHeaders(),
@@ -183,6 +185,7 @@ export class PollingTransport implements Transport {
 
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { ...(this.options.headers || {}) };
+    headers["X-Client-Id"] = this.options.clientId;
     if (this.options.authToken) {
       headers["Authorization"] = `Bearer ${this.options.authToken}`;
     }

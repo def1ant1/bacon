@@ -46,6 +46,7 @@ export interface TransportEventHandlers {
  */
 export interface TransportOptions {
   apiUrl: string;
+  clientId: string;
   sessionId: string;
   userIdentifier?: Record<string, string>;
   /** Optional upload endpoint for file-based channels. */

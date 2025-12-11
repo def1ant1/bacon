@@ -27,6 +27,7 @@ describe("PollingTransport", () => {
     (fetch as any).mockResolvedValue({ ok: true, json: () => Promise.resolve(messages) });
     const transport = new PollingTransport({
       apiUrl: "https://api.example.com/chat",
+      clientId: "client-123",
       sessionId: "s1",
       pollIntervalMs: 50,
     });
@@ -43,6 +44,7 @@ describe("PollingTransport", () => {
     (fetch as any).mockRejectedValueOnce(new Error("offline"));
     const transport = new PollingTransport({
       apiUrl: "https://api.example.com/chat",
+      clientId: "client-123",
       sessionId: "s1",
       pollIntervalMs: 10,
       backoffBaseMs: 20,
@@ -63,10 +65,11 @@ describe("PollingTransport", () => {
     (fetch as any).mockResolvedValue({ ok: true, json: () => Promise.resolve({ reply: "ok" }) });
     const transport = new PollingTransport({
       apiUrl: "https://api.example.com/chat",
+      clientId: "client-123",
       sessionId: "s1",
     });
     transport.setEventHandlers(handlers);
-    const res = await transport.send({ sessionId: "s1", message: "hello" });
+    const res = await transport.send({ clientId: "client-123", sessionId: "s1", message: "hello" });
 
     expect(fetch).toHaveBeenCalledWith("https://api.example.com/chat", expect.anything());
     expect(res).toEqual({ reply: "ok" });

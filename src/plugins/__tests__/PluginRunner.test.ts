@@ -3,6 +3,7 @@ import { PluginRunner, BaconPlugin } from "../BaconPlugin";
 
 const baseContext = {
   apiUrl: "/chat",
+  clientId: "client-1",
   sessionId: "session-1",
   transportKind: "polling",
   userIdentifier: { email: "user@example.com" },
@@ -11,7 +12,7 @@ const baseContext = {
 
 describe("PluginRunner", () => {
   it("chains beforeSend hooks without mutating the source payload", async () => {
-    const initialPayload = { sessionId: "session-1", message: "hi" };
+    const initialPayload = { clientId: "client-1", sessionId: "session-1", message: "hi" };
 
     const plugins: BaconPlugin[] = [
       {
@@ -41,11 +42,11 @@ describe("PluginRunner", () => {
     const response = await runner.send(initialPayload, dispatcher);
 
     expect(response).toMatchObject({ reply: "ok" });
-    expect(initialPayload).toEqual({ sessionId: "session-1", message: "hi" });
+    expect(initialPayload).toEqual({ clientId: "client-1", sessionId: "session-1", message: "hi" });
   });
 
   it("isolates errors so later plugins still run", async () => {
-    const payload = { sessionId: "s", message: "fail" };
+    const payload = { clientId: "client-1", sessionId: "s", message: "fail" };
     const safeHook = vi.fn((p) => ({ payload: p }));
     const plugins: BaconPlugin[] = [
       { name: "boom", onBeforeSend: () => { throw new Error("boom"); } },
@@ -58,7 +59,7 @@ describe("PluginRunner", () => {
   });
 
   it("retries when plugins signal a recoverable send error", async () => {
-    const payload = { sessionId: "s", message: "retry" };
+    const payload = { clientId: "client-1", sessionId: "s", message: "retry" };
     const dispatcher = vi.fn().mockImplementationOnce(() => {
       throw new Error("transient");
     });
@@ -78,7 +79,7 @@ describe("PluginRunner", () => {
   });
 
   it("supports short-circuiting sends for cached responses", async () => {
-    const payload = { sessionId: "s", message: "cached" };
+    const payload = { clientId: "client-1", sessionId: "s", message: "cached" };
     const dispatcher = vi.fn();
     const runner = new PluginRunner(
       [
