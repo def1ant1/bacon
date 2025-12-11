@@ -12,3 +12,7 @@ export * from "./conversations/ConversationDataService";
 export * from "./conversations/ConversationSidebar";
 export * from "./conversations/useConversationFeed";
 export * from "./conversations/types";
+export * from "./conversations/ConversationMessageService";
+export * from "./conversations/ConversationRouter";
+export * from "./conversations/ConversationWindow";
+export * from "./conversations/ConversationWorkspace";
