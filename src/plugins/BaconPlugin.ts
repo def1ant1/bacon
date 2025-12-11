@@ -200,7 +200,7 @@ export class PluginRunner {
     for (const plugin of this.plugins) {
       if (!plugin.onSendError) continue;
       try {
-        const next = await plugin.onSendError(cloneSafe(payload), error, this.ctx);
+        const next = await plugin.onSendError(error, cloneSafe(payload), this.ctx);
         if (next?.retry) directive = { ...directive, ...next };
       } catch (err) {
         console.warn(`[plugin:${plugin.name}] onSendError failed`, err);

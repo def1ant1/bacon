@@ -5,7 +5,7 @@ function nowIso() {
 }
 
 export interface LoggingPluginOptions {
-  log?: (event: string, detail?: Record<string, unknown>) => void;
+  log?: (event: string, detail?: unknown) => void;
 }
 
 export function createLoggingPlugin(options: LoggingPluginOptions = {}): BaconPlugin {

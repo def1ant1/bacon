@@ -8,3 +8,7 @@ export * from "./transports/WebSocketTransport";
 export * from "./plugins/BaconPlugin";
 export * from "./plugins/PluginProvider";
 export * from "./plugins/examples";
+export * from "./conversations/ConversationDataService";
+export * from "./conversations/ConversationSidebar";
+export * from "./conversations/useConversationFeed";
+export * from "./conversations/types";

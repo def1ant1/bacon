@@ -166,6 +166,33 @@ The backend should respond with:
 }
 ```
 
+### Conversation sidebar + inbox API
+
+Enterprise deployments often need an inbox view for triaging many sessions. The library now exports:
+
+- `ConversationDataService` — cache + retry + cancellation aware client for `GET /api/conversations?cursor={cursor}&limit={pageSize}`.
+- `useConversationFeed` — React hook that wraps the service with `loading`, `error`, `hasMore`, `loadMore`, and `retry` flags.
+- `ConversationSidebar` — accessible listbox that shows title/participant, preview text, unread badge, timestamps, and infinite scroll with a fallback "Load more" CTA for deterministic testing.
+
+Server response contract:
+```json
+{
+  "conversations": [
+    {
+      "id": "string",
+      "title": "string",
+      "participantLabel": "optional string",
+      "lastMessageAt": "ISO timestamp",
+      "lastMessagePreview": "optional preview",
+      "unread": true
+    }
+  ],
+  "nextCursor": "opaque cursor or null"
+}
+```
+
+The service deduplicates requests per cursor, retries transient `5xx/429` errors with exponential backoff, and returns cached pages to keep sidebar rendering snappy even when multiple components load simultaneously. AbortControllers are wired through so leaving the page or switching tenants cancels inflight calls without manual cleanup.
+
 ## Example App + Mock Backend
 
 - Dev server exposes a mock backend via Vite middleware.
